@@ -1,0 +1,44 @@
+{
+  "familyId": "duncan",
+  "family": {
+    "name": "Duncan Family",
+    "timezone": "Europe/London",
+    "reminderTime": "07:00",
+    "reminderDays": [1, 2, 3, 4, 5, 6, 7],
+    "calendarId": "",
+    "notifyOnChange": true,
+    "people": [
+      { "id": "claire", "name": "Claire", "colour": "#D81B60", "email": "claire@example.com" },
+      { "id": "alastair", "name": "Alastair", "colour": "#1E88E5", "email": "alastair@example.com" },
+      { "id": "alfie", "name": "Alfie", "colour": "#43A047", "email": "alfie@example.com" }
+    ]
+  },
+  "defaults": {
+    "1": { "people": { "alfie": { "status": "school", "extras": "", "travel": "bus home" } } },
+    "2": { "people": { "alfie": { "status": "school", "extras": "", "travel": "bus home" } } },
+    "3": { "people": { "alfie": { "status": "school", "extras": "", "travel": "bus home" } } },
+    "4": { "people": { "alfie": { "status": "school", "extras": "", "travel": "bus home" } } },
+    "5": { "people": { "alfie": { "status": "school", "extras": "", "travel": "bus home" } } }
+  },
+  "recurring": {
+    "ice-hockey": {
+      "title": "Ice hockey",
+      "time": "19:00",
+      "durationMins": 90,
+      "daysOfWeek": [2],
+      "ownerPersonId": "alastair",
+      "attendees": ["alfie"],
+      "notes": "",
+      "active": true
+    },
+    "beavers": {
+      "title": "Beavers",
+      "time": null,
+      "daysOfWeek": [3],
+      "ownerPersonId": null,
+      "attendees": [],
+      "notes": "",
+      "active": true
+    }
+  }
+}

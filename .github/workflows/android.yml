@@ -1,0 +1,81 @@
+name: Android app
+
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", ".github/workflows/android.yml"]
+    tags: ["v*"]
+  pull_request:
+    paths: ["android/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to attach the APK to a GitHub Release on tags
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Add google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::Add the GOOGLE_SERVICES_JSON repository secret (see docs/SETUP.md, step 6)."
+            exit 1
+          fi
+          echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
+
+      - name: Add signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "BUILD_TYPE=release" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No signing keystore secret — building a debug APK. Google sign-in needs the keystore's SHA-1 registered in Firebase."
+            echo "BUILD_TYPE=debug" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('1.0.{0}', github.run_number) }}
+        run: |
+          if [ "$BUILD_TYPE" = "release" ]; then
+            gradle assembleRelease --stacktrace
+            cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/DuncanFamilyPlanner.apk"
+          else
+            gradle assembleDebug --stacktrace
+            cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/DuncanFamilyPlanner.apk"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DuncanFamilyPlanner-apk
+          path: ${{ runner.temp }}/DuncanFamilyPlanner.apk
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ runner.temp }}/DuncanFamilyPlanner.apk

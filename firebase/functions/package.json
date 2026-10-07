@@ -1,0 +1,25 @@
+{
+  "name": "duncan-family-planner-functions",
+  "private": true,
+  "main": "lib/index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test lib/*.test.js",
+    "seed": "node scripts/seed.js",
+    "deploy": "firebase deploy --only functions,firestore"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.1",
+    "googleapis": "^144.0.0",
+    "luxon": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^20.17.0",
+    "typescript": "^5.6.3"
+  }
+}

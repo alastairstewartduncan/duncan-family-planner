@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// Duncan Family Planner security rules.
+// - Users can only read/write data for the family they belong to.
+// - Family membership (users/{uid}) is created server-side by the joinFamily
+//   Cloud Function, which checks the signed-in Google email against the
+//   family's memberEmails list.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isMember(familyId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userDoc().data.familyId == familyId;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      // Clients may only maintain their own push tokens and widget prefs.
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['fcmTokens', 'updatedAt']);
+      allow create, delete: if false;
+    }
+
+    match /families/{familyId} {
+      allow read: if isMember(familyId);
+      // Members can edit settings (reminder time, calendar, people).
+      allow update: if isMember(familyId)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['lastMorningSent']);
+      allow create, delete: if false;
+
+      match /{collection}/{docId} {
+        allow read, write: if isMember(familyId)
+          && collection in ['days', 'recurring', 'defaults', 'shopping'];
+      }
+    }
+  }
+}

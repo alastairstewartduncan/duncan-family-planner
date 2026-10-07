@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Duncan Family Planner</string>
+    <string name="widget_name">Today\'s family plan</string>
+    <string name="widget_description">Shows today\'s plan for everyone</string>
+    <string name="channel_daily">Morning plan</string>
+    <string name="channel_daily_desc">The day\'s plan, sent every morning</string>
+    <string name="channel_changes">Plan changes</string>
+    <string name="channel_changes_desc">When someone edits today\'s or tomorrow\'s plan</string>
+</resources>
