@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -35,10 +35,11 @@ jobs:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           if [ -z "$GOOGLE_SERVICES_JSON" ]; then
-            echo "::error::Add the GOOGLE_SERVICES_JSON repository secret (see docs/SETUP.md, step 6)."
-            exit 1
+            echo "::warning::GOOGLE_SERVICES_JSON secret not set — compiling with a placeholder config. The APK will build but can't connect to Firebase (see docs/SETUP.md, step 6)."
+            cp ci/placeholder-google-services.json app/google-services.json
+          else
+            echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
           fi
-          echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
 
       - name: Add signing keystore
         env:
