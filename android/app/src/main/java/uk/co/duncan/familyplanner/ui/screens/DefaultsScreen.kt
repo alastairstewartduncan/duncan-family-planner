@@ -54,7 +54,7 @@ import uk.co.duncan.familyplanner.ui.safeLaunch
 @Composable
 fun DefaultsScreen(session: Session.Ready, onBack: () -> Unit) {
     val family = session.family
-    val all by remember(family.id) { Repository.defaultsFlow(family.id) }
+    val all by remember(family.id) { Repository.defaultsFlow() }
         .collectAsStateWithLifecycle(initialValue = null as Map<Int, Map<String, PersonDay>>?)
     var weekday by rememberSaveable { mutableStateOf(1) }
     var draft by remember(weekday) { mutableStateOf<Map<String, PersonDay>?>(null) }
@@ -113,7 +113,7 @@ fun DefaultsScreen(session: Session.Ready, onBack: () -> Unit) {
                     onClick = {
                         val toSave = (draft ?: emptyMap()).filterValues { !it.isEmpty() }
                         scope.safeLaunch(snackbar, "Saved ${WEEKDAY_SHORT[weekday - 1]}") {
-                            Repository.saveDefaults(family.id, weekday, toSave)
+                            Repository.saveDefaults(weekday, toSave)
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),

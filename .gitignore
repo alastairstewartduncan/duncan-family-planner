@@ -10,11 +10,10 @@ android/app/google-services.json
 *.keystore
 captures/
 
-# Firebase
-firebase/functions/node_modules/
-firebase/functions/lib/
-firebase/.firebase/
-firebase/*-debug.log
-service-account*.json
+# Home server (see server/.gitignore too)
+server/node_modules/
+server/dist/
+server/data/
+google-key.json
 
 .DS_Store

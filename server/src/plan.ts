@@ -1,4 +1,4 @@
-// Pure planning logic (no Firebase calls) so it can be unit tested.
+// Pure planning logic (no database calls) so it can be unit tested.
 import { createHash } from "crypto";
 import { DateTime } from "luxon";
 import {
@@ -181,26 +181,4 @@ export function diffCalendar(before: Day | undefined, after: Day | undefined): C
   }
   for (const id of beforeTimed.keys()) if (!afterTimed.has(id)) deletes.push(id);
   return { upserts, deletes };
-}
-
-/** Whether a user edit changed anything worth notifying the family about. */
-export function meaningfulChange(before: Day | undefined, after: Day | undefined): boolean {
-  if (!before || !after) return false;
-  const strip = (d: Day) => JSON.stringify([d.people, d.tea, d.items, d.notes]);
-  return strip(before) !== strip(after);
-}
-
-export function shouldSendMorning(
-  family: Pick<Family, "reminderTime" | "reminderDays" | "lastMorningSent">,
-  now: DateTime,
-): boolean {
-  const today = now.toFormat(DATE_FMT);
-  if (family.lastMorningSent === today) return false;
-  const days = family.reminderDays?.length ? family.reminderDays : [1, 2, 3, 4, 5, 6, 7];
-  if (!days.includes(now.weekday)) return false;
-  const [h, m] = (family.reminderTime || "07:00").split(":").map(Number);
-  const due = now.set({ hour: h, minute: m, second: 0, millisecond: 0 });
-  // Send within a 90 minute window after the due time (covers scheduler gaps
-  // without sending a stale "morning" message in the afternoon).
-  return now >= due && now.diff(due, "minutes").minutes < 90;
 }

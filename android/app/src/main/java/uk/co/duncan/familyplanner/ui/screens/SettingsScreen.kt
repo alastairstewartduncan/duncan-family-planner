@@ -54,7 +54,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.google.firebase.auth.FirebaseAuth
+import androidx.compose.ui.platform.LocalContext
+import uk.co.duncan.familyplanner.notify.MorningAlarm
 import uk.co.duncan.familyplanner.data.Person
 import uk.co.duncan.familyplanner.data.Repository
 import uk.co.duncan.familyplanner.data.WEEKDAY_SHORT
@@ -79,11 +80,12 @@ fun SettingsScreen(
     val family = session.family
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackbar.current
+    val context = LocalContext.current
     var pickTime by remember { mutableStateOf(false) }
     var calendarId by remember(family.calendarId) { mutableStateOf(family.calendarId) }
     var editingPerson by remember { mutableStateOf<Person?>(null) }
 
-    fun update(fields: Map<String, Any?>) = scope.safeLaunch(snackbar) { Repository.updateFamily(family.id, fields) }
+    fun update(fields: Map<String, Any?>) = scope.safeLaunch(snackbar) { Repository.updateFamily(fields) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("More", style = MaterialTheme.typography.titleLarge) }) }) { padding ->
         Column(
@@ -112,7 +114,14 @@ fun SettingsScreen(
             }
 
             SectionLabel("Morning reminder", Modifier.padding(top = 8.dp))
-            OutlinedButton(onClick = { pickTime = true }) { Text("Send at ${family.reminderTime}") }
+            Text(
+                "Each phone shows the day's plan at this time. Everyone shares the same setting.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { pickTime = true }) { Text("Show at ${family.reminderTime}") }
+                TextButton(onClick = { scope.safeLaunch(snackbar) { MorningAlarm.showToday(context) } }) { Text("Send me a test") }
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 WEEKDAY_SHORT.forEachIndexed { i, label ->
                     val d = i + 1
@@ -127,17 +136,10 @@ fun SettingsScreen(
                     )
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Tell everyone about changes", style = MaterialTheme.typography.bodyLarge)
-                    Text("Notify when today's or tomorrow's plan is edited", style = MaterialTheme.typography.bodySmall)
-                }
-                Switch(checked = family.notifyOnChange, onCheckedChange = { update(mapOf("notifyOnChange" to it)) })
-            }
 
             SectionLabel("Google Calendar", Modifier.padding(top = 8.dp))
             Text(
-                "Anything with a time is added to this shared calendar. Leave blank to turn syncing off. See the user guide for how to set it up.",
+                "Anything with a time is added to this shared calendar by the home server. Leave blank to turn syncing off.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             OutlinedTextField(
@@ -148,7 +150,7 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             if (calendarId != family.calendarId) {
-                OutlinedButton(onClick = { scope.safeLaunch(snackbar, "Calendar saved") { Repository.updateFamily(family.id, mapOf("calendarId" to calendarId)) } }) {
+                OutlinedButton(onClick = { scope.safeLaunch(snackbar, "Calendar saved") { Repository.updateFamily(mapOf("calendarId" to calendarId)) } }) {
                     Text("Save calendar")
                 }
             }
@@ -161,10 +163,7 @@ fun SettingsScreen(
                 ) {
                     PersonAvatar(p, 36)
                     Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(p.name + if (p.id == session.personId) " (you)" else "", style = MaterialTheme.typography.bodyLarge)
-                        Text(p.email.ifBlank { "No Google account set" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    Text(p.name + if (p.id == session.personId) " (you)" else "", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 }
             }
             TextButton(onClick = { editingPerson = Person(id = "", name = "", colour = PALETTE[family.people.size % PALETTE.size]) }) {
@@ -174,7 +173,8 @@ fun SettingsScreen(
             }
 
             SectionLabel("Account", Modifier.padding(top = 8.dp))
-            Text("Signed in as ${FirebaseAuth.getInstance().currentUser?.email.orEmpty()}", style = MaterialTheme.typography.bodyMedium)
+            Text("Signed in as ${session.me?.name ?: "?"}", style = MaterialTheme.typography.bodyMedium)
+            Text("Server: ${session.serverUrl}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedButton(onClick = onSignOut) {
                 Icon(Icons.AutoMirrored.Filled.Logout, null)
                 Spacer(Modifier.width(6.dp))
@@ -201,11 +201,11 @@ fun SettingsScreen(
                 editingPerson = null
                 val withId = if (saved.id.isBlank()) saved.copy(id = uniqueId(saved.name, family.people)) else saved
                 val people = if (family.people.any { it.id == withId.id }) family.people.map { if (it.id == withId.id) withId else it } else family.people + withId
-                scope.safeLaunch(snackbar, "Saved") { Repository.savePeople(family.id, people) }
+                scope.safeLaunch(snackbar, "Saved") { Repository.savePeople(people) }
             },
             onDelete = {
                 editingPerson = null
-                scope.safeLaunch(snackbar, "Removed") { Repository.savePeople(family.id, family.people.filterNot { it.id == person.id }) }
+                scope.safeLaunch(snackbar, "Removed") { Repository.savePeople(family.people.filterNot { it.id == person.id }) }
             },
         )
     }
@@ -229,11 +229,6 @@ private fun PersonDialog(initial: Person, canDelete: Boolean, onDismiss: () -> U
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(p.name, { p = p.copy(name = it) }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(
-                    p.email, { p = p.copy(email = it.trim()) }, label = { Text("Google account email") }, singleLine = true,
-                    supportingText = { Text("They sign in with this account") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth(),
-                )
                 Text("Colour", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     PALETTE.forEach { hex ->
@@ -248,7 +243,7 @@ private fun PersonDialog(initial: Person, canDelete: Boolean, onDismiss: () -> U
                 if (canDelete) TextButton(onClick = onDelete) { Text("Remove from family", color = MaterialTheme.colorScheme.error) }
             }
         },
-        confirmButton = { TextButton(enabled = p.name.isNotBlank(), onClick = { onSave(p.copy(name = p.name.trim(), email = p.email.lowercase())) }) { Text("Save") } },
+        confirmButton = { TextButton(enabled = p.name.isNotBlank(), onClick = { onSave(p.copy(name = p.name.trim())) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

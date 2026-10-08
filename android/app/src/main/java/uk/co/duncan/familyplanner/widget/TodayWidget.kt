@@ -34,7 +34,6 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
-import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,6 +55,7 @@ class TodayWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
+        Repository.init(context)
         val state = withTimeoutOrNull(10_000) { load() }
             ?: WidgetState(LocalDate.now().short(), emptyList(), "Couldn't load — tap to open")
         provideContent { GlanceTheme { Content(state) } }
@@ -64,11 +64,11 @@ class TodayWidget : GlanceAppWidget() {
     private suspend fun load(): WidgetState {
         val today = LocalDate.now()
         val title = today.short()
-        if (FirebaseAuth.getInstance().currentUser == null) return WidgetState(title, emptyList(), "Tap to sign in")
+        if (Repository.credentials.value == null) return WidgetState(title, emptyList(), "Tap to sign in")
         return runCatching {
-            val m = Repository.currentMembership() ?: return WidgetState(title, emptyList(), "Tap to join the family")
-            val family = Repository.loadFamily(m.familyId) ?: return WidgetState(title, emptyList(), "Tap to open")
-            val day = Repository.loadDay(m.familyId, today.id()) ?: return WidgetState(title, emptyList(), "Nothing planned yet")
+            // Both fall back to the last copy seen when the server can't be reached.
+            val family = Repository.loadFamily() ?: return WidgetState(title, emptyList(), "Tap to open")
+            val day = Repository.loadDay(today.id()) ?: return WidgetState(title, emptyList(), "Can't reach the home server")
             val lines = mutableListOf<WidgetLine>()
             family.people.forEach { p ->
                 val s = day.people[p.id]?.summary().orEmpty()

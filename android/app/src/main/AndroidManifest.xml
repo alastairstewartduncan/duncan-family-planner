@@ -3,7 +3,15 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Exact morning alarm: auto-granted on Android 13+, user setting on 12. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
 
+    <!-- usesCleartextTraffic: the home server is reached over Tailscale, which
+         encrypts all traffic between devices, so plain http is fine there. -->
     <application
         android:name=".FamilyPlannerApp"
         android:allowBackup="true"
@@ -11,6 +19,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.FamilyPlanner">
 
         <activity
@@ -24,13 +33,20 @@
             </intent-filter>
         </activity>
 
-        <service
-            android:name=".messaging.PlannerMessagingService"
-            android:exported="false">
+        <receiver
+            android:name=".notify.MorningReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".notify.RescheduleReceiver"
+            android:exported="true">
             <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
-        </service>
+        </receiver>
 
         <receiver
             android:name=".widget.TodayWidgetReceiver"
@@ -43,12 +59,5 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/today_widget_info" />
         </receiver>
-
-        <meta-data
-            android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="daily_plan" />
-        <meta-data
-            android:name="com.google.firebase.messaging.default_notification_icon"
-            android:resource="@drawable/ic_notification" />
     </application>
 </manifest>

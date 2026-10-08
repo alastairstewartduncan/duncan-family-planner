@@ -30,17 +30,6 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
-      - name: Add google-services.json
-        env:
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: |
-          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
-            echo "::warning::GOOGLE_SERVICES_JSON secret not set — compiling with a placeholder config. The APK will build but can't connect to Firebase (see docs/SETUP.md, step 6)."
-            cp ci/placeholder-google-services.json app/google-services.json
-          else
-            echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
-          fi
-
       - name: Add signing keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
@@ -50,7 +39,7 @@ jobs:
             echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "BUILD_TYPE=release" >> "$GITHUB_ENV"
           else
-            echo "::warning::No signing keystore secret — building a debug APK. Google sign-in needs the keystore's SHA-1 registered in Firebase."
+            echo "::warning::No signing keystore secret — building a debug APK (fine for family use; see docs/SETUP.md for a release key)."
             echo "BUILD_TYPE=debug" >> "$GITHUB_ENV"
           fi
 

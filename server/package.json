@@ -1,0 +1,25 @@
+{
+  "name": "duncan-family-planner-server",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Self-hosted server for Duncan Family Planner (Node.js + SQLite)",
+  "main": "dist/server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node --disable-warning=ExperimentalWarning dist/server.js",
+    "setup": "node --disable-warning=ExperimentalWarning dist/setup.js",
+    "test": "tsc && node --disable-warning=ExperimentalWarning --test dist/*.test.js"
+  },
+  "dependencies": {
+    "googleapis": "^144.0.0",
+    "luxon": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^22.13.0",
+    "typescript": "^5.6.3"
+  }
+}

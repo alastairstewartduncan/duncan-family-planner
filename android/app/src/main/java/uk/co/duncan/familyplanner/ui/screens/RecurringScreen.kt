@@ -65,7 +65,7 @@ import uk.co.duncan.familyplanner.ui.safeLaunch
 @Composable
 fun RecurringScreen(session: Session.Ready, onBack: () -> Unit) {
     val family = session.family
-    val items by remember(family.id) { Repository.recurringFlow(family.id) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val items by remember(family.id) { Repository.recurringFlow() }.collectAsStateWithLifecycle(initialValue = emptyList())
     var editing by remember { mutableStateOf<RecurringItem?>(null) }
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackbar.current
@@ -117,7 +117,7 @@ fun RecurringScreen(session: Session.Ready, onBack: () -> Unit) {
         editing?.let { r ->
             val delete: () -> Unit = {
                 editing = null
-                scope.safeLaunch(snackbar, "Deleted") { Repository.deleteRecurring(family.id, r.id) }
+                scope.safeLaunch(snackbar, "Deleted") { Repository.deleteRecurring(r.id) }
             }
             RecurringDialog(
                 initial = r,
@@ -125,7 +125,7 @@ fun RecurringScreen(session: Session.Ready, onBack: () -> Unit) {
                 onDismiss = { editing = null },
                 onSave = { saved ->
                     editing = null
-                    scope.safeLaunch(snackbar, "Saved") { Repository.saveRecurring(family.id, saved) }
+                    scope.safeLaunch(snackbar, "Saved") { Repository.saveRecurring(saved) }
                 },
                 onDelete = if (r.id.isBlank()) null else delete,
             )

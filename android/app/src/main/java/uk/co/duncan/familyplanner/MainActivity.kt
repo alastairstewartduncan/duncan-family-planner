@@ -59,6 +59,7 @@ import uk.co.duncan.familyplanner.ui.screens.ShoppingScreen
 import uk.co.duncan.familyplanner.ui.screens.SignInScreen
 import uk.co.duncan.familyplanner.ui.screens.WeekScreen
 import uk.co.duncan.familyplanner.ui.theme.FamilyPlannerTheme
+import uk.co.duncan.familyplanner.notify.MorningAlarm
 import uk.co.duncan.familyplanner.widget.WidgetUpdater
 import java.time.LocalDate
 
@@ -100,17 +101,30 @@ private fun App(openDate: String?, onOpenDateHandled: () -> Unit) {
     val session by vm.session.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
+    val people by vm.people.collectAsStateWithLifecycle()
     val activity = androidx.compose.ui.platform.LocalContext.current as ComponentActivity
 
     when (val s = session) {
         Session.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        Session.SignedOut -> SignInScreen(busy, error, null, { vm.signIn(activity) }, {}, {})
-        is Session.NeedsJoin -> SignInScreen(busy, error, s.email, {}, { vm.join() }, { vm.signOut() })
+        Session.SignedOut -> SignInScreen(
+            busy = busy,
+            error = error,
+            people = people,
+            initialServer = vm.lastServerUrl,
+            onConnect = vm::connect,
+            onSignIn = vm::signIn,
+            onChangeServer = vm::changeServer,
+        )
         is Session.Ready -> {
             NotificationPermission()
-            LaunchedEffect(s.familyId) { WidgetUpdater.refresh(activity) }
+            // Keep the widget and the morning alarm in step with the latest settings.
+            LaunchedEffect(s.family.reminderTime, s.family.reminderDays, s.family.timezone) {
+                MorningAlarm.schedule(activity, s.family)
+                WidgetUpdater.refresh(activity)
+            }
             Home(s, openDate, onOpenDateHandled, onSignOut = {
                 vm.signOut()
+                MorningAlarm.schedule(activity, null)
                 WidgetUpdater.refreshAsync(activity)
             })
         }

@@ -77,19 +77,19 @@ fun DayScreen(
 ) {
     val family = session.family
     val dayId = date.id()
-    val day by remember(family.id, dayId) { Repository.dayFlow(family.id, dayId) }
+    val day by remember(family.id, dayId) { Repository.dayFlow(dayId) }
         .collectAsStateWithLifecycle(initialValue = null)
-    var loading by remember(dayId) { mutableStateOf(true) }
+    var slow by remember(dayId) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackbar.current
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
 
-    // Make sure the day exists on the server (applies defaults + recurring).
-    LaunchedEffect(family.id, dayId) {
-        if (Repository.loadDay(family.id, dayId) == null) Repository.ensureDays(date, 1)
-        loading = false
+    // If nothing has arrived after a few seconds the server is probably unreachable.
+    LaunchedEffect(dayId) {
+        kotlinx.coroutines.delay(8_000)
+        slow = true
     }
 
     val today = LocalDate.now()
@@ -133,7 +133,7 @@ fun DayScreen(
                             onClick = {
                                 menu = false
                                 scope.safeLaunch(snackbar, "Copied from ${date.minusDays(1).dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }}") {
-                                    Repository.copyPeople(family.id, date.minusDays(1).id(), dayId, session.personId)
+                                    Repository.copyPeople(date.minusDays(1).id(), dayId)
                                     WidgetUpdater.refresh(context)
                                 }
                             },
@@ -152,16 +152,20 @@ fun DayScreen(
     ) { padding ->
         val d = day
         when {
-            d == null && loading -> Column(Modifier.fillMaxSize().padding(padding), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            d == null && !slow -> Column(Modifier.fillMaxSize().padding(padding), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 CircularProgressIndicator()
             }
             d == null -> Column(Modifier.fillMaxSize().padding(padding).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Text("Nothing planned yet.", style = MaterialTheme.typography.titleMedium)
-                TextButton(onClick = { onEdit(date) }) { Text("Start planning this day") }
+                Text("Can't reach the home server.", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Check Tailscale is connected on this phone and the PC is on. It'll load as soon as it can.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             else -> DayContent(d, session, Modifier.padding(padding)) { item, change ->
                 scope.safeLaunch(snackbar) {
-                    Repository.updateItem(family.id, dayId, item.id, session.personId, change)
+                    Repository.updateItem(dayId, item, change)
                     WidgetUpdater.refresh(context)
                 }
             }

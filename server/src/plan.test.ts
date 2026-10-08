@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DateTime } from "luxon";
 import {
   buildNewDay,
   calendarEventId,
   diffCalendar,
   formatDay,
   reconcileRecurring,
-  shouldSendMorning,
 } from "./plan";
 import { Person, RecurringItem } from "./types";
 
@@ -64,13 +62,4 @@ test("calendar diff only covers timed items", () => {
   assert.deepEqual(d.upserts.map((i) => i.id), ["x"]);
   assert.deepEqual(diffCalendar(after, before).deletes, ["x"]);
   assert.match(calendarEventId("duncan", "2026-10-06", "x"), /^[0-9a-v]+$/);
-});
-
-test("morning reminder window", () => {
-  const fam = { reminderTime: "07:00", reminderDays: [1, 2, 3, 4, 5, 6, 7] };
-  const at = (t: string) => DateTime.fromISO(`2026-10-07T${t}`, { zone: "Europe/London" });
-  assert.equal(shouldSendMorning(fam, at("06:55")), false);
-  assert.equal(shouldSendMorning(fam, at("07:02")), true);
-  assert.equal(shouldSendMorning({ ...fam, lastMorningSent: "2026-10-07" }, at("07:02")), false);
-  assert.equal(shouldSendMorning(fam, at("13:00")), false);
 });

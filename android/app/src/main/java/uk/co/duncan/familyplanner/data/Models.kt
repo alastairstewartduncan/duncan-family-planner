@@ -5,8 +5,8 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 
-// Firestore data model. Mapped by hand (rather than toObject) so missing or
-// older fields never crash the app. Mirrors firebase/functions/src/types.ts.
+// Data model for the home server's JSON. Mapped by hand so missing or older
+// fields never crash the app. Mirrors server/src/types.ts.
 
 private fun Map<*, *>.str(key: String) = (this[key] as? String) ?: ""
 private fun Map<*, *>.strOrNull(key: String) = (this[key] as? String)?.takeIf { it.isNotBlank() }
@@ -23,12 +23,11 @@ data class Person(
     val id: String,
     val name: String,
     val colour: String = "#607D8B",
-    val email: String = "",
 ) {
-    fun toMap() = mapOf("id" to id, "name" to name, "colour" to colour, "email" to email.lowercase().trim())
+    fun toMap() = mapOf("id" to id, "name" to name, "colour" to colour)
 
     companion object {
-        fun from(m: Map<*, *>) = Person(m.str("id"), m.str("name"), m.str("colour").ifBlank { "#607D8B" }, m.str("email"))
+        fun from(m: Map<*, *>) = Person(m.str("id"), m.str("name"), m.str("colour").ifBlank { "#607D8B" })
     }
 }
 
@@ -39,7 +38,6 @@ data class Family(
     val reminderTime: String = "07:00",
     val reminderDays: List<Int> = (1..7).toList(),
     val calendarId: String = "",
-    val notifyOnChange: Boolean = true,
     val people: List<Person> = emptyList(),
 ) {
     fun person(id: String?): Person? = people.firstOrNull { it.id == id }
@@ -52,7 +50,6 @@ data class Family(
             reminderTime = m.str("reminderTime").ifBlank { "07:00" },
             reminderDays = m.intList("reminderDays").ifEmpty { (1..7).toList() },
             calendarId = m.str("calendarId"),
-            notifyOnChange = m.bool("notifyOnChange", true),
             people = (m["people"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.map(Person::from) ?: emptyList(),
         )
     }
@@ -130,8 +127,12 @@ data class Day(
     )
 
     /** Plain-text version in the same shape as the old WhatsApp messages. */
-    fun asText(family: Family): String {
-        val lines = mutableListOf(LocalDate.parse(date).pretty().uppercase(Locale.UK))
+    fun asText(family: Family): String =
+        (listOf(LocalDate.parse(date).pretty().uppercase(Locale.UK)) + bodyLines(family)).joinToString("\n")
+
+    /** Everything except the date heading (used for notifications too). */
+    fun bodyLines(family: Family): List<String> {
+        val lines = mutableListOf<String>()
         family.people.forEach { p ->
             val s = people[p.id]?.summary().orEmpty()
             if (s.isNotEmpty()) lines += "${p.name} – $s"
@@ -143,8 +144,8 @@ data class Day(
             extra += listOfNotNull(item.time, item.title + (who?.let { " ($it)" } ?: "")).joinToString(" ")
         }
         if (notes.isNotBlank()) extra += notes.trim()
-        if (extra.isNotEmpty()) lines += listOf("") + extra
-        return lines.joinToString("\n")
+        if (extra.isNotEmpty()) lines += (if (lines.isEmpty()) extra else listOf("") + extra)
+        return lines
     }
 
     companion object {
@@ -200,7 +201,5 @@ data class ShoppingItem(val id: String, val text: String, val done: Boolean, val
             ShoppingItem(id, m.str("text"), m.bool("done"), m.strOrNull("addedBy"))
     }
 }
-
-data class Membership(val familyId: String, val personId: String?)
 
 val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

@@ -27,7 +27,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,14 +56,9 @@ fun WeekScreen(session: Session.Ready, onOpenDay: (LocalDate) -> Unit) {
     var weekOffset by rememberSaveable { mutableStateOf(0L) }
     val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).plusWeeks(weekOffset)
     val sunday = monday.plusDays(6)
-    val days by remember(family.id, monday) { Repository.daysFlow(family.id, monday, sunday) }
+    val days by remember(family.id, monday) { Repository.daysFlow(monday, sunday) }
         .collectAsStateWithLifecycle(initialValue = emptyMap())
 
-    LaunchedEffect(family.id, monday) {
-        // Only ask the server to fill in days from today onwards.
-        val from = if (monday.isBefore(today)) today else monday
-        if (!from.isAfter(sunday)) Repository.ensureDays(from, (sunday.toEpochDay() - from.toEpochDay() + 1).toInt())
-    }
 
     val range = "${monday.format(DateTimeFormatter.ofPattern("d MMM", Locale.UK))} – ${sunday.format(DateTimeFormatter.ofPattern("d MMM", Locale.UK))}"
     Scaffold(

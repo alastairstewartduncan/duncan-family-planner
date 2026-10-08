@@ -86,12 +86,7 @@ fun EditDayScreen(session: Session.Ready, date: LocalDate, onDone: () -> Unit) {
 
     // Load once into a local draft so typing isn't disturbed by live updates.
     LaunchedEffect(family.id, dayId) {
-        var d = Repository.loadDay(family.id, dayId)
-        if (d == null) {
-            Repository.ensureDays(date, 1)
-            d = Repository.loadDay(family.id, dayId)
-        }
-        draft = d ?: Day(dayId)
+        draft = Repository.loadDay(dayId) ?: Day(dayId)
     }
 
     Scaffold(
@@ -107,7 +102,7 @@ fun EditDayScreen(session: Session.Ready, date: LocalDate, onDone: () -> Unit) {
                             saving = true
                             scope.safeLaunch(snackbar, "Saved") {
                                 try {
-                                    Repository.saveDay(family.id, d, session.personId)
+                                    Repository.saveDay(d)
                                     WidgetUpdater.refresh(context)
                                     onDone()
                                 } finally {

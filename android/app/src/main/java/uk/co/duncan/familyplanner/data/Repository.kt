@@ -1,235 +1,175 @@
 package uk.co.duncan.familyplanner.data
 
+import android.content.Context
 import android.util.Log
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.firestore.DocumentReference
-import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
-import com.google.firebase.firestore.SetOptions
-import com.google.firebase.functions.FirebaseFunctions
-import com.google.firebase.messaging.FirebaseMessaging
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 
-/** Single access point for Firebase. Kept as an object to avoid a DI framework. */
+/**
+ * Single access point for the home server. Screens observe "live" flows: each
+ * emits the cached copy straight away, then fresh data from the server, and
+ * re-fetches whenever the server's revision changes (checked every 15 s while
+ * the screen is visible) or this phone saves something.
+ */
 object Repository {
     private const val TAG = "Repository"
-    private val auth get() = FirebaseAuth.getInstance()
-    private val db get() = FirebaseFirestore.getInstance()
-    private val functions get() = FirebaseFunctions.getInstance("europe-west2")
+    private const val POLL_MS = 15_000L
+    private lateinit var api: Api
 
-    private fun family(id: String) = db.collection("families").document(id)
-    private fun dayRef(familyId: String, date: String) = family(familyId).collection("days").document(date)
+    /** Bumped after every local write so open screens refresh immediately. */
+    private val localChanges = MutableStateFlow(0L)
 
-    // ---- Auth & membership -------------------------------------------------
-
-    fun authState(): Flow<FirebaseUser?> = callbackFlow {
-        val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser) }
-        auth.addAuthStateListener(listener)
-        awaitClose { auth.removeAuthStateListener(listener) }
+    fun init(context: Context) {
+        if (!::api.isInitialized) api = Api(context.applicationContext)
     }
 
-    fun signOut() = auth.signOut()
+    val credentials: StateFlow<Credentials?> get() = api.credentials
+    val lastServerUrl: String get() = api.lastServerUrl
 
-    /** Emits the user's membership, or null when the users/{uid} doc doesn't exist yet. */
-    fun membership(uid: String): Flow<Membership?> = callbackFlow {
-        val reg = db.collection("users").document(uid).addSnapshotListener { snap, err ->
-            if (err != null) { Log.w(TAG, "membership", err); trySend(null); return@addSnapshotListener }
-            val fid = snap?.getString("familyId")
-            trySend(fid?.let { Membership(it, snap.getString("personId")) })
-        }
-        awaitClose { reg.remove() }
-    }
+    private fun changed() { localChanges.value = localChanges.value + 1 }
 
-    suspend fun currentMembership(): Membership? {
-        val uid = auth.currentUser?.uid ?: return null
-        val snap = db.collection("users").document(uid).get().await()
-        return snap.getString("familyId")?.let { Membership(it, snap.getString("personId")) }
-    }
-
-    suspend fun joinFamily() {
-        functions.getHttpsCallable("joinFamily").call().await()
-    }
-
-    suspend fun registerPushToken() {
-        val uid = auth.currentUser?.uid ?: return
-        runCatching {
-            val token = FirebaseMessaging.getInstance().token.await()
-            db.collection("users").document(uid)
-                .update(mapOf("fcmTokens" to FieldValue.arrayUnion(token), "updatedAt" to FieldValue.serverTimestamp()))
-                .await()
-        }.onFailure { Log.w(TAG, "registerPushToken", it) }
-    }
-
-    suspend fun removePushToken() {
-        val uid = auth.currentUser?.uid ?: return
-        runCatching {
-            val token = FirebaseMessaging.getInstance().token.await()
-            db.collection("users").document(uid).update("fcmTokens", FieldValue.arrayRemove(token)).await()
-        }
-    }
-
-    // ---- Family -------------------------------------------------------------
-
-    fun familyFlow(familyId: String): Flow<Family?> = callbackFlow {
-        val reg = family(familyId).addSnapshotListener { snap, err ->
-            if (err != null) { Log.w(TAG, "family", err); return@addSnapshotListener }
-            trySend(snap?.data?.let { Family.from(familyId, it) })
-        }
-        awaitClose { reg.remove() }
-    }
-
-    suspend fun loadFamily(familyId: String): Family? =
-        family(familyId).get().await().data?.let { Family.from(familyId, it) }
-
-    suspend fun updateFamily(familyId: String, fields: Map<String, Any?>) {
-        family(familyId).update(fields).await()
-    }
-
-    suspend fun savePeople(familyId: String, people: List<Person>) {
-        updateFamily(
-            familyId,
-            mapOf(
-                "people" to people.map { it.toMap() },
-                "memberEmails" to people.map { it.email.lowercase().trim() }.filter { it.isNotEmpty() }.distinct(),
-            ),
-        )
-    }
-
-    // ---- Days ---------------------------------------------------------------
-
-    fun dayFlow(familyId: String, date: String): Flow<Day?> = callbackFlow {
-        val reg = dayRef(familyId, date).addSnapshotListener { snap, err ->
-            if (err != null) { Log.w(TAG, "day", err); return@addSnapshotListener }
-            trySend(snap?.data?.let { Day.from(it) })
-        }
-        awaitClose { reg.remove() }
-    }
-
-    suspend fun loadDay(familyId: String, date: String): Day? =
-        dayRef(familyId, date).get().await().data?.let { Day.from(it) }
-
-    fun daysFlow(familyId: String, from: LocalDate, to: LocalDate): Flow<Map<String, Day>> = callbackFlow {
-        val reg = family(familyId).collection("days")
-            .whereGreaterThanOrEqualTo("date", from.id())
-            .whereLessThanOrEqualTo("date", to.id())
-            .addSnapshotListener { snap, err ->
-                if (err != null) { Log.w(TAG, "days", err); return@addSnapshotListener }
-                trySend(snap?.documents?.mapNotNull { d -> d.data?.let { Day.from(it) } }?.associateBy { it.date } ?: emptyMap())
+    private fun <T> live(path: String, parse: (Any?) -> T): Flow<T> = flow {
+        api.cached(path)?.let { emit(parse(it)) }
+        var lastRevision: Any? = null
+        var lastLocal = -1L
+        while (true) {
+            val local = localChanges.value
+            val revision = runCatching { (api.get("/api/version") as? Map<*, *>)?.get("revision") }.getOrNull()
+            if (revision == null || revision != lastRevision || local != lastLocal) {
+                runCatching { api.get(path) }
+                    .onSuccess { emit(parse(it)); lastRevision = revision; lastLocal = local }
+                    .onFailure { Log.w(TAG, "GET $path failed: ${it.message}") }
             }
-        awaitClose { reg.remove() }
-    }
-
-    /** Asks the server to create day docs (applies weekday defaults and recurring items). */
-    suspend fun ensureDays(from: LocalDate, count: Int = 1) {
-        runCatching {
-            functions.getHttpsCallable("ensureDayRange").call(mapOf("from" to from.id(), "count" to count)).await()
-        }.onFailure { Log.w(TAG, "ensureDays", it) }
-    }
-
-    suspend fun saveDay(familyId: String, day: Day, editorPersonId: String?) {
-        val data = day.copy(updatedBy = editorPersonId ?: "unknown", userEdited = true).toMap() +
-            ("updatedAt" to FieldValue.serverTimestamp())
-        dayRef(familyId, day.date).set(data).await()
-    }
-
-    /** Atomically changes one item (claim, done…) without overwriting others' edits. */
-    suspend fun updateItem(familyId: String, date: String, itemId: String, editorPersonId: String?, change: (PlanItem) -> PlanItem) {
-        val ref = dayRef(familyId, date)
-        db.runTransaction { tx ->
-            val day = tx.get(ref).data?.let { Day.from(it) } ?: return@runTransaction null
-            val items = day.items.map { if (it.id == itemId) change(it) else it }
-            tx.set(ref, day.copy(items = items, updatedBy = editorPersonId ?: "unknown", userEdited = true).toMap() +
-                ("updatedAt" to FieldValue.serverTimestamp()))
-            null
-        }.await()
-    }
-
-    /** Copies everyone's status/extras/travel from one day to another. */
-    suspend fun copyPeople(familyId: String, fromDate: String, toDate: String, editorPersonId: String?) {
-        val source = loadDay(familyId, fromDate) ?: return
-        val ref = dayRef(familyId, toDate)
-        db.runTransaction { tx ->
-            val target = tx.get(ref).data?.let { Day.from(it) } ?: Day(toDate)
-            tx.set(ref, target.copy(people = source.people, updatedBy = editorPersonId ?: "unknown", userEdited = true).toMap() +
-                ("updatedAt" to FieldValue.serverTimestamp()))
-            null
-        }.await()
-    }
-
-    // ---- Recurring & weekday defaults ---------------------------------------
-
-    fun recurringFlow(familyId: String): Flow<List<RecurringItem>> = callbackFlow {
-        val reg = family(familyId).collection("recurring").addSnapshotListener { snap, err ->
-            if (err != null) { Log.w(TAG, "recurring", err); return@addSnapshotListener }
-            trySend(snap?.documents?.map { RecurringItem.from(it.id, it.data ?: emptyMap()) }
-                ?.sortedWith(compareBy({ it.daysOfWeek.minOrNull() ?: 8 }, { it.time ?: "" })) ?: emptyList())
+            withTimeoutOrNull(POLL_MS) { localChanges.first { it != local } }
         }
-        awaitClose { reg.remove() }
     }
 
-    suspend fun saveRecurring(familyId: String, item: RecurringItem) {
-        val col = family(familyId).collection("recurring")
-        val ref: DocumentReference = if (item.id.isBlank()) col.document() else col.document(item.id)
-        ref.set(item.toMap()).await()
+    // ---- Sign-in ------------------------------------------------------------------
+
+    /** Checks the server is reachable and returns the family members to choose from. */
+    suspend fun people(serverUrl: String): List<Person> {
+        val list = api.anonymous(serverUrl, "GET", "/api/people") as? List<*> ?: emptyList<Any>()
+        return list.filterIsInstance<Map<*, *>>().map(Person::from)
     }
 
-    suspend fun deleteRecurring(familyId: String, id: String) {
-        family(familyId).collection("recurring").document(id).delete().await()
+    suspend fun signIn(serverUrl: String, personId: String, pin: String) {
+        val url = Api.normaliseUrl(serverUrl)
+        val res = api.anonymous(url, "POST", "/api/login", mapOf("personId" to personId, "pin" to pin)) as Map<*, *>
+        api.saveCredentials(Credentials(url, res["token"] as String, personId))
     }
 
-    fun defaultsFlow(familyId: String): Flow<Map<Int, Map<String, PersonDay>>> = callbackFlow {
-        val reg = family(familyId).collection("defaults").addSnapshotListener { snap, err ->
-            if (err != null) { Log.w(TAG, "defaults", err); return@addSnapshotListener }
-            trySend(snap?.documents?.mapNotNull { d ->
-                val weekday = d.id.toIntOrNull() ?: return@mapNotNull null
-                val people = (d.get("people") as? Map<*, *>)?.entries
-                    ?.associate { (k, v) -> k.toString() to PersonDay.from(v as? Map<*, *>) } ?: emptyMap()
-                weekday to people
-            }?.toMap() ?: emptyMap())
+    suspend fun signOut() {
+        runCatching { api.post("/api/logout") }
+        api.clearCredentials()
+    }
+
+    // ---- Family ---------------------------------------------------------------------
+
+    private fun parseFamily(v: Any?): Family? = (v as? Map<*, *>)?.let { m ->
+        @Suppress("UNCHECKED_CAST")
+        Family.from("home", m as Map<String, Any?>)
+    }
+
+    fun familyFlow(): Flow<Family?> = live("/api/family", ::parseFamily)
+
+    /** Fresh from the server, or the cached copy when offline. */
+    suspend fun loadFamily(): Family? =
+        runCatching { parseFamily(api.get("/api/family")) }.getOrElse { parseFamily(api.cached("/api/family")) }
+
+    suspend fun updateFamily(fields: Map<String, Any?>) {
+        api.put("/api/family/settings", fields); changed()
+    }
+
+    suspend fun savePeople(people: List<Person>) {
+        api.put("/api/family/people", people.map { it.toMap() }); changed()
+    }
+
+    // ---- Days -------------------------------------------------------------------------
+
+    @Suppress("UNCHECKED_CAST")
+    private fun parseDay(v: Any?): Day? = (v as? Map<String, Any?>)?.let(Day::from)
+
+    fun dayFlow(date: String): Flow<Day?> = live("/api/days/$date", ::parseDay)
+
+    /** Fresh from the server (which creates the day if needed), or the cached copy. */
+    suspend fun loadDay(date: String): Day? =
+        runCatching { parseDay(api.get("/api/days/$date")) }.getOrElse { parseDay(api.cached("/api/days/$date")) }
+
+    fun daysFlow(from: LocalDate, to: LocalDate): Flow<Map<String, Day>> =
+        live("/api/days?from=${from.id()}&to=${to.id()}") { v ->
+            (v as? List<*>)?.mapNotNull { parseDay(it) }?.associateBy { it.date } ?: emptyMap()
         }
-        awaitClose { reg.remove() }
+
+    suspend fun saveDay(day: Day) {
+        api.put("/api/days/${day.date}", day.toMap()); changed()
     }
 
-    suspend fun saveDefaults(familyId: String, weekday: Int, people: Map<String, PersonDay>) {
-        family(familyId).collection("defaults").document(weekday.toString())
-            .set(mapOf("people" to people.mapValues { it.value.toMap() })).await()
+    /** Changes one item (done / claimed) without overwriting other people's edits. */
+    suspend fun updateItem(date: String, item: PlanItem, change: (PlanItem) -> PlanItem) {
+        val next = change(item)
+        api.patch("/api/days/$date/items/${item.id}", mapOf("done" to next.done, "claimedBy" to next.claimedBy)); changed()
     }
 
-    // ---- Shopping list --------------------------------------------------------
-
-    fun shoppingFlow(familyId: String): Flow<List<ShoppingItem>> = callbackFlow {
-        val reg = family(familyId).collection("shopping").orderBy("createdAt", Query.Direction.ASCENDING)
-            .addSnapshotListener { snap, err ->
-                if (err != null) { Log.w(TAG, "shopping", err); return@addSnapshotListener }
-                trySend(snap?.documents?.map { ShoppingItem.from(it.id, it.data ?: emptyMap()) } ?: emptyList())
-            }
-        awaitClose { reg.remove() }
+    suspend fun copyPeople(fromDate: String, toDate: String) {
+        api.post("/api/days/$toDate/copy-people", mapOf("from" to fromDate)); changed()
     }
 
-    suspend fun addShopping(familyId: String, text: String, personId: String?) {
-        family(familyId).collection("shopping").add(
-            mapOf("text" to text.trim(), "done" to false, "addedBy" to personId, "createdAt" to FieldValue.serverTimestamp()),
-        ).await()
+    // ---- Recurring & weekday defaults ---------------------------------------------------
+
+    fun recurringFlow(): Flow<List<RecurringItem>> = live("/api/recurring") { v ->
+        @Suppress("UNCHECKED_CAST")
+        (v as? List<*>)?.filterIsInstance<Map<String, Any?>>()
+            ?.map { RecurringItem.from(it["id"] as String, it) }
+            ?.sortedWith(compareBy({ it.daysOfWeek.minOrNull() ?: 8 }, { it.time ?: "" })) ?: emptyList()
     }
 
-    suspend fun setShoppingDone(familyId: String, id: String, done: Boolean) {
-        family(familyId).collection("shopping").document(id).set(mapOf("done" to done), SetOptions.merge()).await()
+    suspend fun saveRecurring(item: RecurringItem) {
+        if (item.id.isBlank()) api.post("/api/recurring", item.toMap()) else api.put("/api/recurring/${item.id}", item.toMap())
+        changed()
     }
 
-    suspend fun deleteShopping(familyId: String, id: String) {
-        family(familyId).collection("shopping").document(id).delete().await()
+    suspend fun deleteRecurring(id: String) {
+        api.delete("/api/recurring/$id"); changed()
     }
 
-    suspend fun clearDoneShopping(familyId: String) {
-        val done = family(familyId).collection("shopping").whereEqualTo("done", true).get().await()
-        val batch = db.batch()
-        done.documents.forEach { batch.delete(it.reference) }
-        batch.commit().await()
+    fun defaultsFlow(): Flow<Map<Int, Map<String, PersonDay>>> = live("/api/defaults") { v ->
+        (v as? Map<*, *>)?.entries?.mapNotNull { (k, value) ->
+            val weekday = k.toString().toIntOrNull() ?: return@mapNotNull null
+            val people = ((value as? Map<*, *>)?.get("people") as? Map<*, *>)?.entries
+                ?.associate { (id, pd) -> id.toString() to PersonDay.from(pd as? Map<*, *>) } ?: emptyMap()
+            weekday to people
+        }?.toMap() ?: emptyMap()
+    }
+
+    suspend fun saveDefaults(weekday: Int, people: Map<String, PersonDay>) {
+        api.put("/api/defaults/$weekday", mapOf("people" to people.mapValues { it.value.toMap() })); changed()
+    }
+
+    // ---- Shopping list --------------------------------------------------------------------
+
+    fun shoppingFlow(): Flow<List<ShoppingItem>> = live("/api/shopping") { v ->
+        @Suppress("UNCHECKED_CAST")
+        (v as? List<*>)?.filterIsInstance<Map<String, Any?>>()?.map { ShoppingItem.from(it["id"] as String, it) } ?: emptyList()
+    }
+
+    suspend fun addShopping(text: String) {
+        api.post("/api/shopping", mapOf("text" to text.trim())); changed()
+    }
+
+    suspend fun setShoppingDone(id: String, done: Boolean) {
+        api.patch("/api/shopping/$id", mapOf("done" to done)); changed()
+    }
+
+    suspend fun deleteShopping(id: String) {
+        api.delete("/api/shopping/$id"); changed()
+    }
+
+    suspend fun clearDoneShopping() {
+        api.post("/api/shopping/clear-done"); changed()
     }
 }

@@ -48,7 +48,7 @@ import uk.co.duncan.familyplanner.ui.safeLaunch
 @Composable
 fun ShoppingScreen(session: Session.Ready) {
     val family = session.family
-    val list by remember(family.id) { Repository.shoppingFlow(family.id) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val list by remember(family.id) { Repository.shoppingFlow() }.collectAsStateWithLifecycle(initialValue = emptyList())
     var text by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackbar.current
@@ -57,7 +57,7 @@ fun ShoppingScreen(session: Session.Ready) {
         val t = text.trim()
         if (t.isEmpty()) return
         text = ""
-        scope.safeLaunch(snackbar) { Repository.addShopping(family.id, t, session.personId) }
+        scope.safeLaunch(snackbar) { Repository.addShopping(t) }
     }
 
     Scaffold(
@@ -65,7 +65,7 @@ fun ShoppingScreen(session: Session.Ready) {
             TopAppBar(
                 title = { Text("Shopping list", style = MaterialTheme.typography.titleLarge) },
                 actions = {
-                    if (list.any { it.done }) TextButton(onClick = { scope.safeLaunch(snackbar) { Repository.clearDoneShopping(family.id) } }) {
+                    if (list.any { it.done }) TextButton(onClick = { scope.safeLaunch(snackbar) { Repository.clearDoneShopping() } }) {
                         Text("Clear ticked")
                     }
                 },
@@ -91,7 +91,7 @@ fun ShoppingScreen(session: Session.Ready) {
             LazyColumn(contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 items(ordered, key = { it.id }) { item ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = item.done, onCheckedChange = { c -> scope.safeLaunch(snackbar) { Repository.setShoppingDone(family.id, item.id, c) } })
+                        Checkbox(checked = item.done, onCheckedChange = { c -> scope.safeLaunch(snackbar) { Repository.setShoppingDone(item.id, c) } })
                         Text(
                             item.text,
                             modifier = Modifier.weight(1f),
@@ -100,7 +100,7 @@ fun ShoppingScreen(session: Session.Ready) {
                             color = if (item.done) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface,
                         )
                         family.person(item.addedBy)?.let { PersonAvatar(it, 22) }
-                        IconButton(onClick = { scope.safeLaunch(snackbar) { Repository.deleteShopping(family.id, item.id) } }) {
+                        IconButton(onClick = { scope.safeLaunch(snackbar) { Repository.deleteShopping(item.id) } }) {
                             Icon(Icons.Default.Close, "Delete")
                         }
                     }

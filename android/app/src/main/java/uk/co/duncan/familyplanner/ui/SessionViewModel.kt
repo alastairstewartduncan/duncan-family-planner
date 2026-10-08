@@ -1,9 +1,8 @@
 package uk.co.duncan.familyplanner.ui
 
-import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.firebase.functions.FirebaseFunctionsException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -11,18 +10,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import uk.co.duncan.familyplanner.auth.GoogleSignIn
 import uk.co.duncan.familyplanner.data.Family
+import uk.co.duncan.familyplanner.data.Person
 import uk.co.duncan.familyplanner.data.Repository
 
 sealed interface Session {
     data object Loading : Session
     data object SignedOut : Session
-    data class NeedsJoin(val email: String) : Session
-    data class Ready(val family: Family, val personId: String?) : Session {
-        val familyId get() = family.id
+    data class Ready(val family: Family, val personId: String?, val serverUrl: String) : Session {
         val me get() = family.person(personId)
     }
 }
@@ -34,55 +32,36 @@ class SessionViewModel : ViewModel() {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
-    val session: StateFlow<Session> = Repository.authState().flatMapLatest { user ->
-        if (user == null) {
-            flowOf(Session.SignedOut)
-        } else {
-            Repository.membership(user.uid).flatMapLatest { m ->
-                if (m == null) {
-                    flowOf(Session.NeedsJoin(user.email.orEmpty()))
-                } else {
-                    Repository.familyFlow(m.familyId).map { f -> f?.let { Session.Ready(it, m.personId) } ?: Session.Loading }
-                }
-            }
-        }
+    /** Family members offered on the sign-in screen once the server answers. */
+    private val _people = MutableStateFlow<List<Person>?>(null)
+    val people: StateFlow<List<Person>?> = _people
+
+    val session: StateFlow<Session> = Repository.credentials.flatMapLatest { c ->
+        if (c == null) flowOf(Session.SignedOut)
+        else Repository.familyFlow()
+            .map<Family?, Session> { f -> f?.let { Session.Ready(it, c.personId, c.serverUrl) } ?: Session.Loading }
+            .onStart { emit(Session.Loading) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Session.Loading)
 
-    init {
-        // Register the push token whenever we become a ready member, and
-        // try joining automatically right after sign-in.
-        viewModelScope.launch {
-            var registeredFor: String? = null
-            var autoJoinTried = false
-            session.collect { s ->
-                when (s) {
-                    is Session.Ready -> if (registeredFor != s.familyId) {
-                        registeredFor = s.familyId
-                        Repository.registerPushToken()
-                    }
-                    is Session.NeedsJoin -> if (!autoJoinTried) { autoJoinTried = true; join() }
-                    else -> Unit
-                }
-            }
-        }
+    val lastServerUrl: String get() = Repository.lastServerUrl
+
+    fun connect(serverUrl: String) = launchBusy {
+        _people.value = null
+        val people = Repository.people(serverUrl)
+        if (people.isEmpty()) error("The server is running but the family isn't set up yet (run npm run setup on the PC).")
+        _people.value = people
     }
 
-    fun signIn(activity: Activity) = launchBusy {
-        GoogleSignIn.signIn(activity)
-    }
-
-    fun join() = launchBusy {
-        try {
-            Repository.joinFamily()
-        } catch (e: FirebaseFunctionsException) {
-            throw IllegalStateException(e.message ?: "Couldn't join the family")
-        }
+    fun signIn(serverUrl: String, personId: String, pin: String) = launchBusy {
+        Repository.signIn(serverUrl, personId, pin)
     }
 
     fun signOut() = viewModelScope.launch {
-        Repository.removePushToken()
         Repository.signOut()
+        _people.value = null
     }
+
+    fun changeServer() { _people.value = null; _error.value = null }
 
     fun clearError() { _error.value = null }
 
@@ -91,10 +70,16 @@ class SessionViewModel : ViewModel() {
         _error.value = null
         try {
             block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: java.net.ConnectException) {
+            _error.value = "Can't reach the server. Is the PC on, and is Tailscale connected on this phone?"
+        } catch (e: java.net.SocketTimeoutException) {
+            _error.value = "The server didn't answer in time. Is Tailscale connected?"
+        } catch (e: java.net.UnknownHostException) {
+            _error.value = "Can't find that server address. Check it, and that Tailscale is connected."
         } catch (e: Exception) {
-            if (e !is kotlinx.coroutines.CancellationException) {
-                _error.value = e.message ?: e.javaClass.simpleName
-            }
+            _error.value = e.message ?: e.javaClass.simpleName
         } finally {
             _busy.value = false
         }
