@@ -1,18 +1,21 @@
 # Duncan Family Planner — how to use it
 
 The planner replaces the morning "Family daily reminders" message. Everyone sees
-the same plan, gets it as a notification each morning, and timed events land in
-the shared **Duncan Family** Google Calendar automatically.
+the same plan and gets it as a notification each morning. The plan lives on the
+family PC at home, and timed events can also land in the shared **Duncan Family**
+Google Calendar.
 
 ## Getting started
 
-1. Install the app (Alastair will send you the link).
-2. Open it and tap **Sign in with Google**, using your own Google account.
-3. Allow notifications when asked — that's how the morning plan arrives.
-4. Add the widget (see below) so today's plan is always on your home screen.
-
-If it says your email isn't on the family list, ask Alastair to add it under
-**More → Family**.
+1. Install **Tailscale** from the Play Store, sign in with the account Alastair
+   gives you, and leave it switched on. This is what lets your phone reach the
+   family PC from anywhere, including school, work and mobile data.
+2. Install the app (Alastair will send you the link).
+3. Enter the **home server address** (the PC's name, which Alastair will give you)
+   and tap **Connect**.
+4. Tap your name, enter the **family PIN** and tap **Sign in**. You only do this once.
+5. Allow notifications when asked. That's how the morning plan arrives.
+6. Add the widget (see below) so today's plan is always on your home screen.
 
 ## The four tabs
 
@@ -39,8 +42,8 @@ Tap **Edit day** on any day.
   and who it's for.
 - **Notes** — anything else everyone should know.
 
-Tap **Save**. Everyone's app, widget and (for timed items) the family calendar
-update straight away.
+Tap **Save**. Everyone else sees the change within about 15 seconds, and timed
+items are added to the family calendar.
 
 > **Tip:** most days start already filled in from your *usual week* and *regular
 > events*, so you only change what's different.
@@ -74,8 +77,8 @@ updated too.
 
 ## The morning notification
 
-Every morning (07:00 by default) everyone gets the day's plan as a notification,
-laid out just like the old WhatsApp message:
+Every morning (07:00 by default) each phone shows the day's plan as a
+notification, laid out just like the old WhatsApp message:
 
 ```
 Wednesday 7 October
@@ -88,9 +91,14 @@ Beavers
 
 Pull the notification down to see it all; tap it to open that day.
 
-- Change the time or days under **More → Morning reminder**.
-- With **Tell everyone about changes** switched on, the rest of the family get a
-  notification when someone edits today's or tomorrow's plan.
+- Change the time or days under **More → Morning reminder**. The setting is shared
+  by the whole family.
+- **More → Send me a test** shows today's plan straight away, which is handy for
+  checking notifications work.
+- If the PC can't be reached at that moment, you still get the last plan your phone
+  saw.
+- There are no "plan changed" alerts. Open the app or glance at the widget to see
+  the latest.
 
 ## The home screen widget
 
@@ -99,12 +107,13 @@ Pull the notification down to see it all; tap it to open that day.
 3. Resize it as you like. It shows who's where, tea and what's happening, in each
    person's colour. Tap it to open the app.
 
-The widget refreshes when a plan changes, when the morning notification arrives,
-and every half an hour.
+The widget refreshes when you save a change, when the morning notification
+arrives, and every half an hour.
 
 ## Google Calendar
 
-Anything with a **time** is added to the shared *Duncan Family* calendar, with who's
+If Alastair has switched it on, anything with a **time** is added to the shared
+*Duncan Family* calendar, with who's
 taking it in the title (e.g. *Ice hockey (Alastair)*). Change or remove it in the
 app and the calendar follows. Items without a time stay in the app only.
 
@@ -125,16 +134,16 @@ then tap **Clear ticked**. The coloured dot shows who added it.
 
 ## Family settings (More)
 
-- **Family** — add someone, change a name or colour, or set the Google account they
-  sign in with.
+- **Family** — add someone, or change a name or colour.
 - **Google Calendar** — the shared calendar's ID (set up once by Alastair).
-- **Sign out** — at the bottom.
+- **Sign out** — at the bottom, along with the server you're connected to.
 
 ## Questions
 
 | Question | Answer |
 |---|---|
-| I didn't get this morning's notification. | Check the app's notifications are on in phone Settings, and that today is ticked under More → Morning reminder. |
+| It says it can't reach the home server. | Check Tailscale is switched on, and that the family PC is on. You can still see the last plan you loaded. |
+| I didn't get this morning's notification. | Check the app's notifications are on in phone Settings, and that today is ticked under More → Morning reminder. On Samsung or Xiaomi phones, set the app's battery use to *Unrestricted*. |
 | Someone's edit overwrote mine. | Two people saved the same day at once; the last save wins. Re-add your change. |
 | A regular event came back after I deleted it. | Remove it from that day with **Edit day** (not from Regular events). |
-| Does it work offline? | Yes for viewing; edits sync when you're back online. |
+| Does it work offline? | You can view the last plan you loaded. Saving needs a connection to the PC. |

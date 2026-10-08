@@ -1,9 +1,9 @@
 # Duncan Family Planner
 
-A shared daily family planner for Android. It replaces the morning WhatsApp
-"Family daily reminders" message: everyone sees who's where, what's for tea and
-who's taking who, gets the plan as a notification each morning, and timed events
-sync to a shared Google Calendar.
+A shared daily family planner for Android, running on **your own Windows PC**. It
+replaces the morning WhatsApp "Family daily reminders" message: everyone sees
+who's where, what's for tea and who's taking who, gets the plan as a notification
+each morning, and timed events can sync to a shared Google Calendar.
 
 - **User guide:** [docs/USER-GUIDE.md](docs/USER-GUIDE.md)
 - **Setup guide (one-off):** [docs/SETUP.md](docs/SETUP.md)
@@ -14,29 +14,25 @@ sync to a shared Google Calendar.
 - Owner/driver on each item, and **I'll do it** to claim unassigned jobs
 - **Usual week** templates and **regular events** (e.g. ice hockey on Tuesdays) that fill new days automatically
 - Copy previous day, copy as text
-- Week view with teas (meal planner) and a shared shopping list
-- Morning push notification at a set time, plus change notifications
-- Google Calendar sync for timed items to a shared family calendar
+- Week view with teas and a shared shopping list
+- Morning notification at a set time, scheduled by each phone itself (no push service)
 - Home screen widget showing today's plan
-- Google sign-in; only listed family emails can join
+- Works offline with the last plan seen; changes from others appear within ~15 seconds
+- Optional Google Calendar sync for timed items
+- Family PIN sign-in; all data stays on your PC; nightly backups
 
 ## How it fits together
 
 ```
 Android app (Kotlin, Jetpack Compose, Glance widget)
-   │  Firebase Auth (Google) · Firestore (live sync, offline cache)
+   │  HTTP over Tailscale (WireGuard-encrypted, private to your devices)
    ▼
-Firebase (europe-west2)
-   ├─ Firestore: families/{id}/days, recurring, defaults, shopping · users/{uid}
-   └─ Cloud Functions (TypeScript)
-        joinFamily        callable — email allow-list → membership
-        ensureDayRange    callable — create days from defaults + regular events
-        materialiseDays   nightly — keeps the next 14 days ready
-        morningReminder   every 5 min — sends the plan at each family's set time (FCM)
-        onDayWritten      Google Calendar sync + change notifications
-        onRecurringWritten / onDefaultsWritten — apply changes to upcoming days
-   ▼
-Google Calendar (shared "Duncan Family" calendar)
+Windows PC — server/ (Node.js 22, no framework)
+   ├─ data/planner.db   SQLite (built into Node) — days, regular events, usual week, shopping
+   ├─ data/backups/     nightly copy, 14 kept
+   ├─ REST API          /api/days, /api/recurring, /api/defaults, /api/shopping, /api/family …
+   ├─ housekeeping      keeps the next 14 days ready from the usual week + regular events
+   └─ Google Calendar   optional, via a service-account key
 ```
 
 ## Repository layout
@@ -44,19 +40,16 @@ Google Calendar (shared "Duncan Family" calendar)
 | Path | What |
 |---|---|
 | `android/` | The Android app (open this folder in Android Studio) |
-| `firebase/functions/` | Cloud Functions, unit tests (`npm test`) and the seed script |
-| `firebase/firestore.rules` | Security rules — members can only see their own family |
-| `firebase/seed/family.json` | Initial family, usual week and regular events |
-| `.github/workflows/` | APK build (artifact + GitHub Release on `v*` tags) and functions tests/deploy |
+| `server/` | Home server: `src/` code and tests, `windows/install.ps1`, `family.example.json` |
+| `.github/workflows/` | APK build (artifact + GitHub Release on `v*` tags) and server tests on Linux + Windows |
 | `docs/` | User guide and setup guide |
 
 ## Development
 
 ```bash
 # Server
-cd firebase/functions && npm install && npm test
-firebase emulators:start   # optional local testing
+cd server && npm install && npm test
+cp family.example.json family.json && npm run build && npm run setup && npm start
 
-# App
-# put google-services.json in android/app/, then open android/ in Android Studio
+# App: open android/ in Android Studio and run. On the emulator use server address 10.0.2.2
 ```
