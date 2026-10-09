@@ -34,13 +34,18 @@ cd duncan-family-planner\server
 
 ## 2. Install the server
 
-Open **PowerShell as administrator** (Start → type PowerShell → right-click → Run as
-administrator), then:
+Open the `server\windows` folder in File Explorer and double-click
+**`install.cmd`**. Say **Yes** when Windows asks for administrator rights.
+
+Or, from an **Administrator PowerShell** window:
 
 ```powershell
-cd C:\duncan-family-planner\server
-powershell -ExecutionPolicy Bypass -File .\windows\install.ps1
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+& C:\duncan-family-planner\server\windows\install.ps1
 ```
+
+(Windows blocks scripts by default. The first line relaxes that for this one window
+only, so nothing changes on the PC permanently.)
 
 This installs the packages, builds the server, adds a **"Duncan Family Planner"**
 task that starts it whenever Windows starts (and restarts it if it stops), and
@@ -144,14 +149,15 @@ Google Calendar. This uses a free Google Cloud "service account" — no billing 
 | Logs | `server\logs\server.log` |
 | Backups | `server\data\backups\` — one per day, last 14 kept. Copy them somewhere safe (OneDrive, USB) now and then. |
 | Restore a backup | Stop the task, copy a backup over `server\data\planner.db` (delete any `planner.db-wal`/`-shm` files), start the task. |
-| Update to a new version | `git pull`, then re-run `windows\install.ps1` as administrator. |
+| Update to a new version | `git pull`, then double-click `windows\install.cmd` again. |
 | Move to another PC | Copy the whole `server\data` folder and `google-key.json`, run the installer there, update the address in the app. |
-| Uninstall | `windows\uninstall.ps1` as administrator (data is kept). |
+| Uninstall | In an Administrator PowerShell: `Set-ExecutionPolicy -Scope Process Bypass -Force; & .\windows\uninstall.ps1` (data is kept). |
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
+| "running scripts is disabled on this system" | Use `install.cmd`, or run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` in the same window first. |
 | App says it can't reach the server | Tailscale on in the phone? PC on and awake? Try `http://<pc-name>:8787/api/health` in the phone's browser. |
 | Works at home but not out and about | The phone is using your Wi-Fi address instead of Tailscale — use the Tailscale name, and check Tailscale is connected. |
 | "That PIN isn't right" | Five wrong tries locks sign-in for a minute. Reset the PIN with `npm run setup`. |

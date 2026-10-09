@@ -1,9 +1,10 @@
 <#
   Duncan Family Planner - install or update the server on Windows.
 
-  Run from an *Administrator* PowerShell window:
-      cd <repo>\server
-      powershell -ExecutionPolicy Bypass -File .\windows\install.ps1
+  Easiest: double-click install.cmd in this folder.
+  Or from an *Administrator* PowerShell window:
+      Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+      & <repo>\server\windows\install.ps1
 
   What it does:
     1. Checks Node.js 22.13+ is installed.
