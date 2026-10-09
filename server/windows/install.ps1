@@ -51,10 +51,14 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 Step "Installing packages and building"
 Push-Location $ServerDir
 try {
-  if (Test-Path package-lock.json) { npm ci --no-audit --no-fund } else { npm install --no-audit --no-fund }
-  if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-  npm run build
-  if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+  # Run npm through cmd.exe: npm prints harmless warnings on stderr, which
+  # PowerShell (especially the ISE) would otherwise treat as a fatal error.
+  # Success or failure is judged on npm's exit code only.
+  $install = if (Test-Path package-lock.json) { "npm ci" } else { "npm install" }
+  cmd /c "$install --no-audit --no-fund --loglevel=error 2>&1" | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit code $LASTEXITCODE) - see the messages above." }
+  cmd /c "npm run build 2>&1" | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "Build failed (exit code $LASTEXITCODE) - see the messages above." }
 } finally { Pop-Location }
 
 # --- Config ------------------------------------------------------------------------
@@ -101,10 +105,15 @@ try {
 }
 
 $ts = Get-Command tailscale -ErrorAction SilentlyContinue
+$name = $null
 if ($ts) {
-  $name = (& tailscale status --json | ConvertFrom-Json).Self.DNSName.TrimEnd(".")
-  Write-Host "`nIn the app, use this server address:  http://$($name.Split('.')[0]):$Port" -ForegroundColor Green
+  try { $name = ((cmd /c "tailscale status --json 2>nul") -join "`n" | ConvertFrom-Json).Self.DNSName.TrimEnd(".") } catch { }
+}
+if ($name) {
+  Write-Host "`nIn the app, use this server address:  $($name.Split('.')[0])" -ForegroundColor Green
   Write-Host "(or the full name http://$($name):$Port)"
+} elseif ($ts) {
+  Write-Warning "Tailscale is installed but not signed in on this PC - sign in, then use the PC's Tailscale name in the app."
 } else {
   Write-Warning "Tailscale isn't installed on this PC yet - see docs\SETUP.md step 4."
 }
