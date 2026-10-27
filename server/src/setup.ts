@@ -4,6 +4,7 @@
 // days and the shopping list.
 import fs from "node:fs";
 import path from "node:path";
+import { BrickStore } from "./brick";
 import { ROOT, loadConfig } from "./config";
 import { DAYS_AHEAD, Store } from "./store";
 import { Family, PersonDay, RecurringItem } from "./types";
@@ -13,6 +14,7 @@ interface SeedFile {
   family: Omit<Family, "calendarId"> & { calendarId?: string };
   defaults?: Record<string, { people: Record<string, PersonDay> }>;
   recurring?: Record<string, RecurringItem>;
+  brick?: { guardians?: string[]; emergencyMinutes?: number };
 }
 
 const file = path.resolve(process.argv[2] ?? path.join(ROOT, "family.json"));
@@ -44,6 +46,11 @@ if (pin) {
 } else if (!store.hasPin()) {
   console.error('No PIN set yet. Add "pin": "1234" (4–8 digits) to family.json and run setup again.');
   process.exit(1);
+}
+
+if (seed.brick) {
+  new BrickStore(store).saveSettings(seed.brick);
+  console.log(`✔ Brick parents: ${(seed.brick.guardians ?? []).join(", ") || "(unchanged)"}`);
 }
 
 store.ensureDays(store.today(), DAYS_AHEAD);

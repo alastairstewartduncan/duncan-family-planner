@@ -10,6 +10,26 @@
         android:name="android.permission.SCHEDULE_EXACT_ALARM"
         android:maxSdkVersion="32" />
 
+    <!-- Brick: read and write NFC tags, buzz on a tap. -->
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+
+    <!-- Brick lists apps with a launcher icon so you can choose your essentials. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.SETTINGS" />
+        </intent>
+    </queries>
+
     <!-- usesCleartextTraffic: the home server is reached over Tailscale, which
          encrypts all traffic between devices, so plain http is fine there. -->
     <application
@@ -45,6 +65,56 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ===== Brick ===== -->
+        <activity
+            android:name=".brick.BlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="uk.co.duncan.familyplanner.brick"
+            android:theme="@style/Theme.FamilyPlanner.Brick" />
+
+        <!-- Opens when the phone touches a Brick tag, from any screen. -->
+        <activity
+            android:name=".brick.TagTapActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="uk.co.duncan.familyplanner.tap"
+            android:theme="@style/Theme.FamilyPlanner.Tap">
+            <intent-filter>
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.uk.co.duncan.brick" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".brick.BlockerService"
+            android:exported="false"
+            android:label="@string/brick_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/brick_blocker" />
+        </service>
+
+        <receiver
+            android:name=".brick.BrickAdminReceiver"
+            android:exported="true"
+            android:label="@string/brick_admin_label"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/brick_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
             </intent-filter>
         </receiver>
 

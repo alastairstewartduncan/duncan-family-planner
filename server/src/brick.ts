@@ -1,0 +1,400 @@
+// Brick: phone-free time for the family. Phones lock everything except essential
+// apps until someone taps their phone on a registered NFC "brick" tag. The
+// phones do the locking themselves (so it works offline); the server keeps the
+// shared rules, the tag list and what everyone's phone is doing.
+import { randomUUID } from "node:crypto";
+import { DateTime } from "luxon";
+import { HttpError, Store } from "./store";
+
+export type TagKind = "brick" | "emergency";
+
+export interface BrickTag {
+  id: string; // also written on the tag itself
+  kind: TagKind;
+  name: string; // "Kitchen", "Hall cupboard"
+  hash: string; // sha256(uidHex + ":" + secret) — the secret never leaves the tag and the phone that wrote it
+  createdAt: string;
+  createdBy: string;
+  lastUsedAt: string | null;
+  lastUsedBy: string | null;
+  spent: boolean; // emergency only: used, and waiting for a guardian to re-arm it
+}
+
+export interface BrickSettings {
+  guardians: string[]; // person ids who can change the rules ([] = anyone, until someone is chosen)
+  emergencyMinutes: number; // how long an emergency tap unlocks a phone for
+  rearmAfterEmergency: boolean; // an emergency tag stops working once used, until a guardian re-arms it
+}
+
+export interface BrickSchedule {
+  id: string;
+  label: string; // "School nights"
+  personIds: string[];
+  days: number[]; // ISO weekday the lock STARTS on (1 Mon .. 7 Sun)
+  start: string; // "HH:mm"
+  end: string; // "HH:mm" — earlier than start means it runs past midnight
+  active: boolean;
+}
+
+export interface FamilyFocus {
+  active: boolean;
+  personIds: string[];
+  startedBy: string;
+  startedAt: string;
+  until: string | null; // ISO; null = until a guardian ends it
+}
+
+export interface BrickPass {
+  until: string; // ISO
+  grantedBy: string;
+}
+
+export interface PhoneStatus {
+  locked: boolean;
+  reason: string; // "manual" | "focus" | "schedule" | ""
+  until: string | null;
+  since: string | null;
+  serviceOn: boolean; // the app blocker (accessibility service) is switched on
+  adminOn: boolean; // uninstall protection is on
+  nfcOn: boolean;
+  appVersion: string;
+  updatedAt: string; // server time of the last check-in
+}
+
+export interface BrickEvent {
+  id: number;
+  at: string;
+  personId: string;
+  type: string; // brick | unbrick | emergency | denied | session | tamper | pass | focus
+  detail: string;
+  minutes: number; // for "session": how long the phone was bricked
+}
+
+const DEFAULT_SETTINGS: BrickSettings = { guardians: [], emergencyMinutes: 60, rearmAfterEmergency: true };
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const HASH = /^[0-9a-f]{64}$/;
+const EVENT_TYPES = new Set(["brick", "unbrick", "emergency", "denied", "session", "tamper"]);
+
+export class BrickStore {
+  constructor(private store: Store) {
+    store.db.exec(`
+      CREATE TABLE IF NOT EXISTS brick_tags (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS brick_status (person_id TEXT PRIMARY KEY, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS brick_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, person_id TEXT NOT NULL,
+        type TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', minutes INTEGER NOT NULL DEFAULT 0);
+      CREATE INDEX IF NOT EXISTS brick_events_at ON brick_events (at);
+    `);
+  }
+
+  private kv<T>(key: string, fallback: T): T {
+    const row = this.store.db.prepare("SELECT value FROM kv WHERE key = ?").get(key) as { value: string } | undefined;
+    return row ? { ...fallback, ...(JSON.parse(row.value) as T) } : fallback;
+  }
+
+  private setKv(key: string, value: unknown) {
+    this.store.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(key, JSON.stringify(value));
+    this.store.touch();
+  }
+
+  // ---- Who's in charge -------------------------------------------------------------
+
+  settings(): BrickSettings {
+    return this.kv("brickSettings", DEFAULT_SETTINGS);
+  }
+
+  isGuardian(personId: string): boolean {
+    const g = this.settings().guardians;
+    return g.length === 0 || g.includes(personId);
+  }
+
+  requireGuardian(personId: string) {
+    if (!this.isGuardian(personId)) throw new HttpError(403, "Only a parent can change that.");
+  }
+
+  saveSettings(input: Partial<BrickSettings>): BrickSettings {
+    const people = this.store.family().people.map((p) => p.id);
+    const next = { ...this.settings() };
+    if (input.guardians !== undefined) {
+      const g = [...new Set((input.guardians as unknown[]).map(String))].filter((id) => people.includes(id));
+      if (!g.length) throw new HttpError(400, "Choose at least one parent.");
+      next.guardians = g;
+    }
+    if (input.emergencyMinutes !== undefined) {
+      next.emergencyMinutes = Math.min(Math.max(Math.round(Number(input.emergencyMinutes) || 60), 5), 24 * 60);
+    }
+    if (input.rearmAfterEmergency !== undefined) next.rearmAfterEmergency = !!input.rearmAfterEmergency;
+    this.setKv("brickSettings", next);
+    return next;
+  }
+
+  // ---- Tags ------------------------------------------------------------------------
+
+  tags(): BrickTag[] {
+    const rows = this.store.db.prepare("SELECT json FROM brick_tags").all() as { json: string }[];
+    return rows.map((r) => JSON.parse(r.json) as BrickTag).sort((a, b) => a.kind.localeCompare(b.kind) || a.createdAt.localeCompare(b.createdAt));
+  }
+
+  private tag(id: string): BrickTag {
+    const row = this.store.db.prepare("SELECT json FROM brick_tags WHERE id = ?").get(id) as { json: string } | undefined;
+    if (!row) throw new HttpError(404, "That tag isn't registered.");
+    return JSON.parse(row.json) as BrickTag;
+  }
+
+  private writeTag(t: BrickTag) {
+    this.store.db.prepare("INSERT INTO brick_tags (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json")
+      .run(t.id, JSON.stringify(t));
+  }
+
+  /**
+   * Registers a tag. There can only ever be one emergency tag: adding another
+   * is refused unless `replace` is set, which retires the old one for good.
+   */
+  addTag(body: any, personId: string): BrickTag {
+    const kind: TagKind = body?.kind === "emergency" ? "emergency" : "brick";
+    const id = String(body?.id ?? "");
+    const hash = String(body?.hash ?? "").toLowerCase();
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(id) || !HASH.test(hash)) throw new HttpError(400, "That tag couldn't be read properly. Try again.");
+    const all = this.tags();
+    if (all.some((t) => t.id === id || t.hash === hash)) throw new HttpError(409, "That tag is already registered.");
+    const tag: BrickTag = {
+      id, kind, hash,
+      name: String(body?.name ?? "").trim().slice(0, 40) || (kind === "emergency" ? "Emergency" : "Brick"),
+      createdAt: new Date().toISOString(), createdBy: personId,
+      lastUsedAt: null, lastUsedBy: null, spent: false,
+    };
+    this.store.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (kind === "emergency") {
+        const existing = all.filter((t) => t.kind === "emergency");
+        if (existing.length && !body?.replace) {
+          throw new HttpError(409, "There's already an emergency tag. Replace it to retire the old one.");
+        }
+        for (const t of existing) this.store.db.prepare("DELETE FROM brick_tags WHERE id = ?").run(t.id);
+      }
+      this.writeTag(tag);
+      this.store.db.exec("COMMIT");
+    } catch (e) {
+      this.store.db.exec("ROLLBACK");
+      throw e;
+    }
+    this.log(personId, kind === "emergency" ? "emergency-sealed" : "tag-added", tag.name);
+    this.store.touch();
+    return tag;
+  }
+
+  renameTag(id: string, name: string): BrickTag {
+    const t = { ...this.tag(id), name: name.trim().slice(0, 40) || this.tag(id).name };
+    this.writeTag(t);
+    this.store.touch();
+    return t;
+  }
+
+  deleteTag(id: string) {
+    this.tag(id);
+    this.store.db.prepare("DELETE FROM brick_tags WHERE id = ?").run(id);
+    this.store.touch();
+  }
+
+  rearm(id: string, personId: string): BrickTag {
+    const t = { ...this.tag(id), spent: false };
+    this.writeTag(t);
+    this.log(personId, "rearmed", t.name);
+    this.store.touch();
+    return t;
+  }
+
+  // ---- Schedules, focus and passes ---------------------------------------------------
+
+  schedules(): BrickSchedule[] {
+    return this.kv<{ list: BrickSchedule[] }>("brickSchedules", { list: [] }).list;
+  }
+
+  saveSchedules(input: unknown): BrickSchedule[] {
+    const people = this.store.family().people.map((p) => p.id);
+    const list = (Array.isArray(input) ? input : []).map((s: any): BrickSchedule => {
+      const days = [...new Set(((s?.days ?? []) as unknown[]).map(Number).filter((d) => d >= 1 && d <= 7))].sort();
+      const personIds = [...new Set(((s?.personIds ?? []) as unknown[]).map(String))].filter((id) => people.includes(id));
+      if (!HHMM.test(s?.start) || !HHMM.test(s?.end) || s.start === s.end) throw new HttpError(400, "Each schedule needs a start and end time.");
+      if (!days.length || !personIds.length) throw new HttpError(400, "Each schedule needs at least one day and one person.");
+      return {
+        id: /^[A-Za-z0-9_-]{1,64}$/.test(s?.id ?? "") ? s.id : randomUUID(),
+        label: String(s?.label ?? "").trim().slice(0, 40) || "Phone-free time",
+        personIds, days, start: s.start, end: s.end, active: s?.active !== false,
+      };
+    });
+    this.setKv("brickSchedules", { list });
+    return list;
+  }
+
+  focus(): FamilyFocus | null {
+    const f = this.kv<FamilyFocus | { active: false }>("brickFocus", { active: false });
+    if (!f.active) return null;
+    const ff = f as FamilyFocus;
+    if (ff.until && ff.until <= new Date().toISOString()) return null;
+    return ff;
+  }
+
+  startFocus(body: any, personId: string): FamilyFocus {
+    const people = this.store.family().people.map((p) => p.id);
+    const chosen = Array.isArray(body?.personIds) ? (body.personIds as unknown[]).map(String).filter((id) => people.includes(id)) : people;
+    if (!chosen.length) throw new HttpError(400, "Choose who's taking part.");
+    let until: string | null = null;
+    if (body?.minutes !== undefined && body?.minutes !== null) {
+      const mins = Math.round(Number(body.minutes));
+      if (!(mins >= 5 && mins <= 24 * 60)) throw new HttpError(400, "Family Focus can last between 5 minutes and a day.");
+      until = new Date(Date.now() + mins * 60_000).toISOString();
+    }
+    const f: FamilyFocus = { active: true, personIds: chosen, startedBy: personId, startedAt: new Date().toISOString(), until };
+    this.setKv("brickFocus", f);
+    this.log(personId, "focus", until ? `until ${until}` : "until ended");
+    return f;
+  }
+
+  endFocus(personId: string) {
+    this.setKv("brickFocus", { active: false });
+    this.log(personId, "focus-ended", "");
+  }
+
+  passes(): Record<string, BrickPass> {
+    const all = this.kv<Record<string, BrickPass>>("brickPasses", {});
+    const now = new Date().toISOString();
+    return Object.fromEntries(Object.entries(all).filter(([, p]) => p.until > now));
+  }
+
+  grantPass(body: any, grantedBy: string): BrickPass | null {
+    const target = String(body?.personId ?? "");
+    if (!this.store.family().people.some((p) => p.id === target)) throw new HttpError(400, "Who is the pass for?");
+    const passes = this.passes();
+    const mins = Math.round(Number(body?.minutes ?? 0));
+    if (mins <= 0) {
+      delete passes[target];
+      this.setKv("brickPasses", passes);
+      this.log(grantedBy, "pass-cancelled", target);
+      return null;
+    }
+    if (mins > 24 * 60) throw new HttpError(400, "A pass can last up to a day.");
+    const pass = { until: new Date(Date.now() + mins * 60_000).toISOString(), grantedBy };
+    passes[target] = pass;
+    this.setKv("brickPasses", passes);
+    this.log(grantedBy, "pass", `${target} for ${mins} min`);
+    return pass;
+  }
+
+  // ---- Phones checking in --------------------------------------------------------------
+
+  statuses(): Record<string, PhoneStatus> {
+    const rows = this.store.db.prepare("SELECT person_id, json FROM brick_status").all() as { person_id: string; json: string }[];
+    return Object.fromEntries(rows.map((r) => [r.person_id, JSON.parse(r.json) as PhoneStatus]));
+  }
+
+  /** A phone reports its state. Only real changes bump the revision, so heartbeats don't make every phone refetch. */
+  reportStatus(personId: string, body: any): PhoneStatus {
+    const before = this.statuses()[personId];
+    const s: PhoneStatus = {
+      locked: !!body?.locked,
+      reason: ["manual", "focus", "schedule"].includes(body?.reason) ? body.reason : "",
+      until: typeof body?.until === "string" ? body.until : null,
+      since: typeof body?.since === "string" ? body.since : null,
+      serviceOn: !!body?.serviceOn,
+      adminOn: !!body?.adminOn,
+      nfcOn: body?.nfcOn !== false,
+      appVersion: String(body?.appVersion ?? "").slice(0, 32),
+      updatedAt: new Date().toISOString(),
+    };
+    this.store.db.prepare("INSERT INTO brick_status (person_id, json) VALUES (?, ?) ON CONFLICT(person_id) DO UPDATE SET json = excluded.json")
+      .run(personId, JSON.stringify(s));
+    const changed = !before || before.locked !== s.locked || before.reason !== s.reason ||
+      before.serviceOn !== s.serviceOn || before.adminOn !== s.adminOn;
+    if (before && before.serviceOn && !s.serviceOn) this.log(personId, "tamper", "App blocker was switched off");
+    if (changed) this.store.touch();
+    return s;
+  }
+
+  /** Something happened on a phone: it was bricked, unbricked, an emergency tag was used… */
+  reportEvent(personId: string, body: any): BrickEvent {
+    const type = String(body?.type ?? "");
+    if (!EVENT_TYPES.has(type)) throw new HttpError(400, "Unknown event.");
+    let detail = String(body?.detail ?? "").slice(0, 200);
+    if (body?.tagId) {
+      const tag = this.tags().find((t) => t.id === String(body.tagId));
+      if (tag) {
+        const used: BrickTag = { ...tag, lastUsedAt: new Date().toISOString(), lastUsedBy: personId };
+        if (type === "emergency" && tag.kind === "emergency" && this.settings().rearmAfterEmergency) used.spent = true;
+        this.writeTag(used);
+        detail = detail || tag.name;
+      }
+    }
+    const minutes = type === "session" ? Math.min(Math.max(Math.round(Number(body?.minutes) || 0), 0), 24 * 60) : 0;
+    const at = typeof body?.at === "string" && DateTime.fromISO(body.at).isValid ? DateTime.fromISO(body.at).toUTC().toISO()! : new Date().toISOString();
+    const ev = this.log(personId, type, detail, minutes, at);
+    if (type !== "session") this.store.touch();
+    return ev;
+  }
+
+  private log(personId: string, type: string, detail: string, minutes = 0, at = new Date().toISOString()): BrickEvent {
+    const r = this.store.db.prepare("INSERT INTO brick_events (at, person_id, type, detail, minutes) VALUES (?, ?, ?, ?, ?)")
+      .run(at, personId, type, detail, minutes);
+    // Keep a year of history.
+    this.store.db.prepare("DELETE FROM brick_events WHERE at < ?").run(DateTime.now().minus({ days: 366 }).toUTC().toISO());
+    return { id: Number(r.lastInsertRowid), at, personId, type, detail, minutes };
+  }
+
+  events(limit = 40): BrickEvent[] {
+    const rows = this.store.db.prepare(
+      "SELECT id, at, person_id, type, detail, minutes FROM brick_events WHERE type != 'session' ORDER BY id DESC LIMIT ?",
+    ).all(limit) as { id: number; at: string; person_id: string; type: string; detail: string; minutes: number }[];
+    return rows.map((r) => ({ id: r.id, at: r.at, personId: r.person_id, type: r.type, detail: r.detail, minutes: r.minutes }));
+  }
+
+  /** Phone-free minutes per person: today, this week (Mon–Sun) and a day-by-day streak. */
+  stats() {
+    const zone = this.store.family().timezone;
+    const now = DateTime.now().setZone(zone);
+    const today = now.startOf("day");
+    const weekStart = now.startOf("week");
+    const from = today.minus({ days: 60 });
+    const rows = this.store.db.prepare(
+      "SELECT person_id, at, minutes FROM brick_events WHERE type = 'session' AND at >= ?",
+    ).all(from.toUTC().toISO()) as { person_id: string; at: string; minutes: number }[];
+    const out: Record<string, { today: number; week: number; streakDays: number; byDay: Record<string, number> }> = {};
+    for (const p of this.store.family().people) out[p.id] = { today: 0, week: 0, streakDays: 0, byDay: {} };
+    for (const r of rows) {
+      const s = out[r.person_id];
+      if (!s) continue;
+      const at = DateTime.fromISO(r.at).setZone(zone);
+      const key = at.toFormat("yyyy-MM-dd");
+      s.byDay[key] = (s.byDay[key] ?? 0) + r.minutes;
+      if (at >= today) s.today += r.minutes;
+      if (at >= weekStart) s.week += r.minutes;
+    }
+    // A streak counts days with at least an hour phone-free, ending today or yesterday.
+    for (const s of Object.values(out)) {
+      let d = (s.byDay[today.toFormat("yyyy-MM-dd")] ?? 0) >= 60 ? today : today.minus({ days: 1 });
+      while ((s.byDay[d.toFormat("yyyy-MM-dd")] ?? 0) >= 60) {
+        s.streakDays++;
+        d = d.minus({ days: 1 });
+      }
+      // Only the last 7 days go to the phones.
+      s.byDay = Object.fromEntries(Array.from({ length: 7 }, (_, i) => today.minus({ days: 6 - i }).toFormat("yyyy-MM-dd")).map((k) => [k, s.byDay[k] ?? 0]));
+    }
+    return out;
+  }
+
+  /** Everything a phone needs, in one call. Tags carry hashes only, never secrets. */
+  snapshot(personId: string) {
+    return {
+      settings: this.settings(),
+      isGuardian: this.isGuardian(personId),
+      tags: this.tags(),
+      schedules: this.schedules(),
+      focus: this.focus(),
+      passes: this.passes(),
+      statuses: this.statuses(),
+      events: this.events(),
+      stats: this.stats(),
+      serverTime: new Date().toISOString(),
+    };
+  }
+}

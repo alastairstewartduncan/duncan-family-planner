@@ -172,4 +172,75 @@ object Repository {
     suspend fun clearDoneShopping() {
         api.post("/api/shopping/clear-done"); changed()
     }
+
+    // ---- Brick (phone-free time) ------------------------------------------------------------
+
+    val personId: String? get() = if (::api.isInitialized) api.credentials.value?.personId else null
+
+    /** Family details from the last copy seen, without touching the network. */
+    fun cachedFamily(): Family? = parseFamily(api.cached("/api/family"))
+    fun cachedFamilyTimezone(): String? = cachedFamily()?.timezone
+    fun cachedPeople(): List<Person> = cachedFamily()?.people.orEmpty()
+
+    private fun parseBrick(v: Any?): BrickSnapshot? = (v as? Map<*, *>)?.let(BrickSnapshot::from)
+
+    fun brickFlow(): Flow<BrickSnapshot?> = live("/api/brick", ::parseBrick)
+
+    /** Last copy this phone saw, without touching the network (used by the blocker). */
+    fun cachedBrick(): BrickSnapshot? = parseBrick(api.cached("/api/brick"))
+
+    /** Fresh from the server, or the cached copy when offline. */
+    suspend fun loadBrick(): BrickSnapshot? =
+        runCatching { parseBrick(api.get("/api/brick")) }.getOrElse { cachedBrick() }
+
+    suspend fun saveBrickSettings(fields: Map<String, Any?>) {
+        api.put("/api/brick/settings", fields); changed()
+    }
+
+    suspend fun addBrickTag(id: String, kind: TagKind, name: String, hash: String, replace: Boolean = false) {
+        api.post(
+            "/api/brick/tags",
+            mapOf("id" to id, "kind" to if (kind == TagKind.Emergency) "emergency" else "brick", "name" to name, "hash" to hash, "replace" to replace),
+        ); changed()
+    }
+
+    suspend fun renameBrickTag(id: String, name: String) {
+        api.put("/api/brick/tags/$id", mapOf("name" to name)); changed()
+    }
+
+    suspend fun deleteBrickTag(id: String) {
+        api.delete("/api/brick/tags/$id"); changed()
+    }
+
+    suspend fun rearmBrickTag(id: String) {
+        api.post("/api/brick/tags/$id/rearm"); changed()
+    }
+
+    suspend fun saveBrickSchedules(list: List<BrickSchedule>) {
+        api.put("/api/brick/schedules", list.map { it.toMap() }); changed()
+    }
+
+    /** minutes = null runs until a parent ends it. */
+    suspend fun startFamilyFocus(minutes: Int?, personIds: List<String>) {
+        api.post("/api/brick/focus", mapOf("minutes" to minutes, "personIds" to personIds)); changed()
+    }
+
+    suspend fun endFamilyFocus() {
+        api.delete("/api/brick/focus"); changed()
+    }
+
+    /** minutes = 0 cancels the pass. */
+    suspend fun grantBrickPass(personId: String, minutes: Int) {
+        api.post("/api/brick/pass", mapOf("personId" to personId, "minutes" to minutes)); changed()
+    }
+
+    suspend fun reportBrickStatus(fields: Map<String, Any?>) {
+        api.post("/api/brick/status", fields)
+    }
+
+    suspend fun reportBrickEvent(fields: Map<String, Any?>) {
+        api.post("/api/brick/events", fields)
+    }
+
+    fun brickChanged() = changed()
 }

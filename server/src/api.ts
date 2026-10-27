@@ -1,6 +1,7 @@
 // HTTP API. Plain node:http with a tiny router, so there's nothing extra to install.
 import { IncomingMessage, ServerResponse } from "node:http";
 import { DateTime } from "luxon";
+import { BrickStore } from "./brick";
 import { DATE_FMT } from "./plan";
 import { HttpError, Store } from "./store";
 import { Person, PersonDay, RecurringItem } from "./types";
@@ -143,6 +144,32 @@ export function createApi(store: Store) {
     store.clearDoneShopping();
     return { ok: true };
   });
+
+  // ---- Brick (phone-free time) ------------------------------------------------------
+  const brick = new BrickStore(store);
+  const guardian = (h: Handler): Handler => (ctx) => {
+    brick.requireGuardian(ctx.personId);
+    return h(ctx);
+  };
+
+  add("GET", "/api/brick", ({ personId }) => brick.snapshot(personId));
+  add("PUT", "/api/brick/settings", guardian(({ body }) => brick.saveSettings(body ?? {})));
+  add("POST", "/api/brick/tags", guardian(({ body, personId }) => brick.addTag(body, personId)));
+  add("PUT", `/api/brick/tags/${ID}`, guardian(({ params, body }) => brick.renameTag(params[0], String(body?.name ?? ""))));
+  add("DELETE", `/api/brick/tags/${ID}`, guardian(({ params }) => {
+    brick.deleteTag(params[0]);
+    return { ok: true };
+  }));
+  add("POST", `/api/brick/tags/${ID}/rearm`, guardian(({ params, personId }) => brick.rearm(params[0], personId)));
+  add("PUT", "/api/brick/schedules", guardian(({ body }) => brick.saveSchedules(body)));
+  add("POST", "/api/brick/focus", guardian(({ body, personId }) => brick.startFocus(body, personId)));
+  add("DELETE", "/api/brick/focus", guardian(({ personId }) => {
+    brick.endFocus(personId);
+    return { ok: true };
+  }));
+  add("POST", "/api/brick/pass", guardian(({ body, personId }) => brick.grantPass(body, personId)));
+  add("POST", "/api/brick/status", ({ body, personId }) => brick.reportStatus(personId, body));
+  add("POST", "/api/brick/events", ({ body, personId }) => brick.reportEvent(personId, body));
 
   // ---- Dispatcher ------------------------------------------------------------------
   return async function handle(req: IncomingMessage, res: ServerResponse) {
