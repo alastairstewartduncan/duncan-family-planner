@@ -17,13 +17,14 @@ Google Calendar.
 5. Allow notifications when asked. That's how the morning plan arrives.
 6. Add the widget (see below) so today's plan is always on your home screen.
 
-## The four tabs
+## The five tabs
 
 | Tab | What it's for |
 |---|---|
 | **Today** | The day's plan. Use the arrows to move a day at a time; the calendar icon jumps back to today. |
 | **Week** | All seven days at a glance, including what's for tea. Tap a day to open it. |
 | **Shopping** | A shared list everyone can add to and tick off. |
+| **Brick** | Phone-free time: tap your phone on a Brick tag to lock all but your essential apps. See [BRICK.md](BRICK.md). |
 | **More** | Regular events, your usual week, reminder time, calendar and family settings. |
 
 ## Planning a day
