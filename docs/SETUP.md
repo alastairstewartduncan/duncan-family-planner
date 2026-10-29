@@ -32,6 +32,10 @@ cd duncan-family-planner\server
 
 (Any folder works; these steps assume `C:\duncan-family-planner`.)
 
+> **Quickest way:** after step 1, double-click **`server\windows\first-time-setup.cmd`**.
+> It does steps 2 and 3 for you: installs the server, asks you to type the family
+> PIN, sets up the family and restarts the server. Then carry on from step 4.
+
 ## 2. Install the server
 
 Open the `server\windows` folder in File Explorer and double-click

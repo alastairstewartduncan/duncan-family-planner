@@ -13,7 +13,7 @@ export const ROOT = path.resolve(__dirname, "..");
 
 export function loadConfig(): Config {
   const file = path.join(ROOT, "config.json");
-  const fromFile = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as Partial<Config>) : {};
+  const fromFile = fs.existsSync(file) ? (readJsonFile(file) as Partial<Config>) : {};
   const cfg: Config = {
     port: Number(process.env.PORT ?? fromFile.port ?? 8787),
     dataDir: process.env.DATA_DIR ?? fromFile.dataDir ?? "data",
@@ -27,4 +27,12 @@ export function loadConfig(): Config {
   }
   fs.mkdirSync(cfg.dataDir, { recursive: true });
   return cfg;
+}
+
+/**
+ * Reads a JSON file, ignoring a leading byte-order mark. Windows PowerShell 5.1
+ * (the one built into Windows) adds one when it writes UTF-8, which JSON.parse rejects.
+ */
+export function readJsonFile(file: string): unknown {
+  return JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
 }

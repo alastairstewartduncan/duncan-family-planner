@@ -64,8 +64,8 @@ try {
 # --- Config ------------------------------------------------------------------------
 $config = Join-Path $ServerDir "config.json"
 if (-not (Test-Path $config)) {
-  @{ port = $Port; dataDir = "data"; googleKeyFile = "google-key.json"; backupsToKeep = 14 } |
-    ConvertTo-Json | Set-Content -Encoding UTF8 $config
+  $json = @{ port = $Port; dataDir = "data"; googleKeyFile = "google-key.json"; backupsToKeep = 14 } | ConvertTo-Json
+  [IO.File]::WriteAllText($config, $json, (New-Object System.Text.UTF8Encoding $false))
   Write-Host "Created config.json (port $Port)"
 } else {
   $Port = (Get-Content $config -Raw | ConvertFrom-Json).port
