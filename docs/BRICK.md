@@ -63,9 +63,16 @@ Open **Brick**. A checklist shows what's left:
 
 ## Using it
 
-- **Brick your phone:** hold it against any Brick. Two buzzes = locked.
-- **Unbrick:** hold it against a Brick again. One buzz = unlocked, and it tells
-  you how long you were phone-free.
+- **Brick your phone:** press **Brick** on the home-screen widget (or in the Brick
+  tab). You can also hold the phone to any Brick. Two buzzes = locked.
+- **Unbrick:** walk to a Brick and scan it. One buzz = unlocked, and it tells you
+  how long you were phone-free. Scanning is the only way back, which is the point.
+- **Your usage:** every bricked stretch is recorded. The Brick tab shows today,
+  this week, your streak and a list of your phone-free sessions.
+
+**Add the widget:** long-press an empty spot on your home screen → **Widgets** →
+**Duncan Family Planner** → drag **Brick button** onto the screen. While you're
+bricked it shows how long you've been phone-free.
 - While bricked, opening any other app shows the Brick screen instead, with your
   essential apps one tap away and a **Phone** button.
 - You can lock the screen, restart the phone or lose signal — it stays bricked.

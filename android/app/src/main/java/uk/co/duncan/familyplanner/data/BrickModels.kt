@@ -124,6 +124,11 @@ data class BrickStats(val today: Int, val week: Int, val streakDays: Int, val by
     }
 }
 
+/** A finished stretch of phone-free time: when it ended and how long it lasted. */
+data class BrickSession(val end: Instant, val minutes: Int) {
+    val start: Instant get() = end.minusSeconds(minutes * 60L)
+}
+
 data class BrickSnapshot(
     val settings: BrickSettings = BrickSettings(),
     val isGuardian: Boolean = false,
@@ -134,6 +139,7 @@ data class BrickSnapshot(
     val statuses: Map<String, PhoneStatus> = emptyMap(),
     val events: List<BrickEvent> = emptyList(),
     val stats: Map<String, BrickStats> = emptyMap(),
+    val mySessions: List<BrickSession> = emptyList(),
 ) {
     val emergencyTag: BrickTagInfo? get() = tags.firstOrNull { it.kind == TagKind.Emergency }
     val bricks: List<BrickTagInfo> get() = tags.filter { it.kind == TagKind.Brick }
@@ -157,6 +163,9 @@ data class BrickSnapshot(
             stats = (m["stats"] as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->
                 (v as? Map<*, *>)?.let { k.toString() to BrickStats.from(it) }
             }?.toMap() ?: emptyMap(),
+            mySessions = m.maps("mySessions").mapNotNull { x ->
+                parseInstant(x.sOrNull("at"))?.let { BrickSession(it, x.n("minutes")) }
+            },
         )
     }
 }

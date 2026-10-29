@@ -145,4 +145,9 @@ test("phone-free minutes add up into today, the week and a streak", async () => 
   assert.ok(stats.alastair.streakDays >= 2);
   assert.equal(Object.keys(stats.alastair.byDay).length, 7);
   assert.equal(stats.alfie.today, 0);
+
+  // Each person sees their own sessions, newest first.
+  const mine = (await call("alastair", "GET", "/api/brick")).json.mySessions;
+  assert.deepEqual(mine.map((x: any) => x.minutes), [75, 90]);
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.mySessions.length, 0);
 });

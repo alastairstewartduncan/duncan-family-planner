@@ -348,6 +348,15 @@ export class BrickStore {
     return rows.map((r) => ({ id: r.id, at: r.at, personId: r.person_id, type: r.type, detail: r.detail, minutes: r.minutes }));
   }
 
+  /** One person's recent phone-free sessions (newest first): when each ended and how long it lasted. */
+  sessions(personId: string, days = 14, limit = 50): { at: string; minutes: number; detail: string }[] {
+    const since = DateTime.now().minus({ days }).toUTC().toISO();
+    const rows = this.store.db.prepare(
+      "SELECT at, minutes, detail FROM brick_events WHERE type = 'session' AND person_id = ? AND at >= ? ORDER BY at DESC LIMIT ?",
+    ).all(personId, since, limit) as { at: string; minutes: number; detail: string }[];
+    return rows.map((r) => ({ at: r.at, minutes: r.minutes, detail: r.detail }));
+  }
+
   /** Phone-free minutes per person: today, this week (Mon–Sun) and a day-by-day streak. */
   stats() {
     const zone = this.store.family().timezone;
@@ -394,6 +403,7 @@ export class BrickStore {
       statuses: this.statuses(),
       events: this.events(),
       stats: this.stats(),
+      mySessions: this.sessions(personId),
       serverTime: new Date().toISOString(),
     };
   }

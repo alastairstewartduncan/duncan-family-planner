@@ -159,9 +159,18 @@ fun BrickScreen(session: Session.Ready) {
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            StatusHero(lock, data, me, hasBricks = data.bricks.isNotEmpty())
+            StatusHero(lock, data, me, hasBricks = data.bricks.isNotEmpty(), onBrickNow = {
+                if (!BrickSetup.serviceEnabled(context)) {
+                    scope.launch { snackbar.showSnackbar("Switch on the app blocker first (see the checklist below)") }
+                } else if (BrickEngine.brickNow(context)) {
+                    context.startActivity(android.content.Intent(context, uk.co.duncan.familyplanner.brick.BlockActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            })
 
             SetupChecklist(resumes, data, onChooseApps = { choosingApps = true })
+
+            // ---- My phone-free log ----
+            SessionLog(data.mySessions, lock)
 
             // ---- The family right now ----
             SectionLabel("The family", Modifier.padding(top = 8.dp))
@@ -399,7 +408,7 @@ private fun describe(type: String, detail: String) = when (type) {
 // ---- Hero ------------------------------------------------------------------------------
 
 @Composable
-private fun StatusHero(lock: LockState, data: BrickSnapshot, me: String?, hasBricks: Boolean) {
+private fun StatusHero(lock: LockState, data: BrickSnapshot, me: String?, hasBricks: Boolean, onBrickNow: () -> Unit) {
     val locked = lock.locked
     val bg by animateColorAsState(if (locked) Color(0xFF101614) else MaterialTheme.colorScheme.primaryContainer, label = "bg")
     val fg = if (locked) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
@@ -431,12 +440,26 @@ private fun StatusHero(lock: LockState, data: BrickSnapshot, me: String?, hasBri
                         lock.passUntil != null -> "Until ${BrickEngine.formatTime(lock.passUntil)}"
                         locked && lock.since != null -> "Phone-free for ${human(Duration.between(lock.since, now))}" +
                             (lock.until?.let { " · unlocks ${BrickEngine.formatTime(it)}" } ?: "")
-                        !hasBricks -> "Add a Brick below to get started"
+                        !hasBricks -> "Add a Brick below so you can unlock again"
                         else -> BrickEngine.nextScheduled(data, me)?.let { (s, at) -> "${s.label} starts ${BrickEngine.formatTime(at.toInstant())}" }
-                            ?: "Hold your phone to a Brick to lock"
+                            ?: "Press Brick — scan a Brick to unlock"
                     }
                     Text(sub, style = MaterialTheme.typography.bodyMedium, color = fg.copy(alpha = 0.8f))
                 }
+            }
+            if (!locked) {
+                Button(
+                    onClick = onBrickNow,
+                    enabled = hasBricks,
+                    modifier = Modifier.fillMaxWidth().height(56.dp).padding(top = 4.dp),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Icon(Icons.Default.Lock, null)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Brick", style = MaterialTheme.typography.titleLarge)
+                }
+            } else if (lock.reason == LockReason.Manual) {
+                Text("Scan a Brick to unlock", style = MaterialTheme.typography.bodyMedium, color = accent)
             }
             if (stats != null) {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -967,3 +990,45 @@ private fun ParentsDialog(data: BrickSnapshot, people: List<Person>, onDismiss: 
 @Suppress("unused")
 private fun openApp(context: android.content.Context, pkg: String) =
     context.packageManager.getLaunchIntentForPackage(pkg)?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+
+// ---- Usage log ---------------------------------------------------------------------------
+
+@Composable
+private fun SessionLog(sessions: List<uk.co.duncan.familyplanner.data.BrickSession>, lock: LockState) {
+    val zone = java.time.ZoneId.systemDefault()
+    val today = LocalDate.now(zone)
+    val current = if (lock.locked && lock.since != null) lock.since else null
+    if (sessions.isEmpty() && current == null) return
+    SectionLabel("Your phone-free time", Modifier.padding(top = 8.dp))
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+            fun dayName(d: LocalDate) = when (d) {
+                today -> "Today"
+                today.minusDays(1) -> "Yesterday"
+                else -> d.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", java.util.Locale.UK))
+            }
+            fun hm(i: Instant) = i.atZone(zone).let { "%02d:%02d".format(it.hour, it.minute) }
+            if (current != null) {
+                LogRow("Now", "Since ${hm(current)}", "${human(Duration.between(current, Instant.now()))} so far", live = true)
+            }
+            var lastDay: LocalDate? = null
+            sessions.take(20).forEach { s ->
+                val d = s.end.atZone(zone).toLocalDate()
+                LogRow(if (d != lastDay) dayName(d) else "", "${hm(s.start)}–${hm(s.end)}", human(Duration.ofMinutes(s.minutes.toLong())))
+                lastDay = d
+            }
+        }
+    }
+}
+
+@Composable
+private fun LogRow(day: String, time: String, length: String, live: Boolean = false) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(day, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(78.dp))
+        Text(time, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(
+            length, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+            color = if (live) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}

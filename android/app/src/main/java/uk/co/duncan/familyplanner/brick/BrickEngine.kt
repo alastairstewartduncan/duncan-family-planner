@@ -113,12 +113,13 @@ object BrickEngine {
     ): LockState {
         if (me == null) return LockState.Open
         val overrideKey = if (ignoreOverride) null else this.overrideKey
+        // Bricking yourself (Brick button or a tag) always wins: you chose it, and a tag undoes it.
+        manualSince?.let { return LockState(true, LockReason.Manual, null, "Bricked", true, it) }
+
         val emergency = emergencyUntil
         if (emergency != null) return LockState(false, emergencyUntil = emergency)
         val pass = snap.passes[me]?.until?.takeIf { it.isAfter(now) }
         if (pass != null) return LockState(false, passUntil = pass)
-
-        manualSince?.let { return LockState(true, LockReason.Manual, null, "Bricked", true, it) }
 
         val guardian = snap.isGuardian
         val focus = snap.focus
@@ -195,9 +196,11 @@ object BrickEngine {
             }
             BrickNotifications.showLockState(context, next)
             pushStatus(context)
+            uk.co.duncan.familyplanner.widget.BrickWidgetUpdater.refreshAsync(context)
         } else if (before.reason != next.reason || before.until != next.until) {
             BrickNotifications.showLockState(context, next)
             pushStatus(context)
+            uk.co.duncan.familyplanner.widget.BrickWidgetUpdater.refreshAsync(context)
         }
         // Forget a parent's override once that lock window has gone.
         val key = overrideKey
@@ -263,6 +266,21 @@ object BrickEngine {
                 TapResult.Denied(lockedMessage(current, snap))
             }
         }
+    }
+
+    /**
+     * The Brick button (widget or app): bricks the phone straight away, no tag
+     * needed. Scanning a Brick is the only way back. Ends an emergency unlock,
+     * a pass is left alone (it unlocks anyway until it runs out).
+     */
+    fun brickNow(context: Context): Boolean {
+        init(context)
+        if (Repository.personId == null) return false
+        if (evaluate().locked) return false
+        prefs.edit().putInstant("manualSince", Instant.now()).remove("emergencyUntil").remove("overrideKey").apply()
+        queueEvent("brick", detail = "Brick button")
+        refresh(context)
+        return true
     }
 
     /** A parent tapped during Family Focus or a schedule and chose to unlock only their own phone. */
