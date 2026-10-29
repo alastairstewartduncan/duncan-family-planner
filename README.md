@@ -29,7 +29,7 @@ each morning, and timed events can sync to a shared Google Calendar.
 
 ```
 Android app (Kotlin, Jetpack Compose, Glance widget)
-   │  HTTP over Tailscale (WireGuard-encrypted, private to your devices)
+   │  HTTPS to the home's static IP (server's own certificate, pinned by each phone)
    ▼
 Windows PC — server/ (Node.js 22, no framework)
    ├─ data/planner.db   SQLite (built into Node) — days, regular events, usual week, shopping

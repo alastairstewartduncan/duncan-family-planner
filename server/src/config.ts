@@ -7,6 +7,7 @@ export interface Config {
   dataDir: string; // database + backups live here
   googleKeyFile: string; // service account key for Google Calendar sync ("" = off)
   backupsToKeep: number;
+  https: boolean; // serve over HTTPS with the server's own pinned certificate (default on)
 }
 
 export const ROOT = path.resolve(__dirname, "..");
@@ -19,6 +20,7 @@ export function loadConfig(): Config {
     dataDir: process.env.DATA_DIR ?? fromFile.dataDir ?? "data",
     googleKeyFile: process.env.GOOGLE_KEY_FILE ?? fromFile.googleKeyFile ?? "google-key.json",
     backupsToKeep: Number(fromFile.backupsToKeep ?? 14),
+    https: (process.env.HTTPS ?? String(fromFile.https ?? true)) !== "false",
   };
   cfg.dataDir = path.resolve(ROOT, cfg.dataDir);
   if (cfg.googleKeyFile) {

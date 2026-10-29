@@ -112,6 +112,7 @@ private fun App(openDate: String?, openScreen: String?, onOpenScreenHandled: () 
     val busy by vm.busy.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val people by vm.people.collectAsStateWithLifecycle()
+    val trustPrompt by vm.trustPrompt.collectAsStateWithLifecycle()
     val activity = androidx.compose.ui.platform.LocalContext.current as ComponentActivity
 
     when (val s = session) {
@@ -124,6 +125,9 @@ private fun App(openDate: String?, openScreen: String?, onOpenScreenHandled: () 
             onConnect = vm::connect,
             onSignIn = vm::signIn,
             onChangeServer = vm::changeServer,
+            trustPrompt = trustPrompt,
+            onTrust = vm::trustServer,
+            onDismissTrust = vm::dismissTrust,
         )
         is Session.Ready -> {
             NotificationPermission()

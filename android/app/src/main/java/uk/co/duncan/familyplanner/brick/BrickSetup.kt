@@ -104,14 +104,13 @@ object BrickSetup {
             .sortedBy { it.label.lowercase() }
     }
 
-    /** Sensible essentials to start with: maps, clock, calculator, camera, Tailscale. */
+    /** Sensible essentials to start with: maps, clock, calculator, camera. */
     fun suggestedEssentials(context: Context): Set<String> {
         val candidates = setOf(
             "com.google.android.apps.maps", "com.waze",
             "com.google.android.deskclock", "com.sec.android.app.clockpackage", "com.android.deskclock",
             "com.google.android.calculator", "com.sec.android.app.popupcalculator",
             "com.google.android.GoogleCamera", "com.sec.android.app.camera", "com.android.camera2",
-            "com.tailscale.ipn",
         )
         val installed = launchableApps(context).map { it.packageName }.toSet()
         return candidates.intersect(installed)

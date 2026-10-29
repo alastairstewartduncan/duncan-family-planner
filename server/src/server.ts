@@ -1,10 +1,12 @@
 // Entry point: `npm start`. Opens the database, starts the API and the daily housekeeping.
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import path from "node:path";
 import { createApi } from "./api";
 import { CalendarSync } from "./calendar";
 import { loadConfig } from "./config";
 import { DAYS_AHEAD, Store } from "./store";
+import { loadOrCreateTls } from "./tls";
 
 const config = loadConfig();
 const store = new Store(path.join(config.dataDir, "planner.db"));
@@ -38,14 +40,29 @@ function housekeeping() {
 housekeeping();
 setInterval(housekeeping, 10 * 60 * 1000).unref();
 
-const server = createServer(createApi(store));
-server.listen(config.port, "0.0.0.0", () => {
-  console.log(`Duncan Family Planner server listening on port ${config.port}`);
-  console.log(`Data folder: ${config.dataDir}`);
+const handler = createApi(store);
+let server: ReturnType<typeof createServer>;
+async function start() {
+  if (config.https) {
+    const tls = await loadOrCreateTls(path.join(config.dataDir, "tls"));
+    server = createHttpsServer({ key: tls.key, cert: tls.cert }, handler);
+    console.log(`HTTPS on. Security code phones should show: ${tls.securityCode}`);
+  } else {
+    server = createServer(handler);
+    console.log("HTTPS off (plain http) - only use this on a private network.");
+  }
+  server.listen(config.port, "0.0.0.0", () => {
+    console.log(`Duncan Family Planner server listening on port ${config.port}`);
+    console.log(`Data folder: ${config.dataDir}`);
+  });
+}
+start().catch((e) => {
+  console.error("Couldn't start the server", e);
+  process.exit(1);
 });
 
 function shutdown() {
-  server.close();
+  server?.close();
   store.db.close();
   process.exit(0);
 }

@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "googleapis": "^144.0.0",
-    "luxon": "^3.5.0"
+    "luxon": "^3.5.0",
+    "selfsigned": "^5.5.0"
   },
   "devDependencies": {
     "@types/luxon": "^3.4.2",

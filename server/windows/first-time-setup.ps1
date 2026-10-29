@@ -28,8 +28,8 @@ try {
   Step "Family PIN"
   Write-Host "Everyone types this once, the first time they sign in on their phone."
   do {
-    $pin = Read-Host "Choose a family PIN (4 to 8 digits)"
-  } until ($pin -match '^\d{4,8}$')
+    $pin = Read-Host "Choose a family PIN (6 to 8 digits)"
+  } until ($pin -match '^\d{6,8}$')
 
   $data = Get-Content $family -Raw | ConvertFrom-Json
   $data | Add-Member -NotePropertyName pin -NotePropertyValue $pin -Force
@@ -51,10 +51,12 @@ try {
   Start-ScheduledTask -TaskName $TaskName
   Start-Sleep -Seconds 4
   $port = (Get-Content (Join-Path $ServerDir "config.json") -Raw | ConvertFrom-Json).port
-  try {
-    $health = Invoke-RestMethod -Uri "http://localhost:$port/api/health" -TimeoutSec 5
-    Write-Host "All done. The server is running and the family is set up (PIN set: $($health.hasPin))." -ForegroundColor Green
-  } catch {
+  $out = & curl.exe -sk --max-time 5 "https://localhost:$port/api/health" 2>$null
+  if ($LASTEXITCODE -eq 0 -and $out) {
+    Write-Host "All done. The server is running and the family is set up." -ForegroundColor Green
+    $code = Join-Path $ServerDir "data\tls\security-code.txt"
+    if (Test-Path $code) { Write-Host "Security code phones should show:  $((Get-Content $code -Raw).Trim())" -ForegroundColor Green }
+  } else {
     Write-Warning "The server didn't answer yet. Check $ServerDir\logs\server.log"
   }
 } finally { Pop-Location }

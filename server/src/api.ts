@@ -18,6 +18,22 @@ const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 /** Failed PIN attempts per address, to slow down guessing. */
 const failures = new Map<string, { count: number; until: number }>();
 
+/**
+ * Failed PIN attempts from anywhere. The server can be reachable from the
+ * internet, where guesses can come from many addresses, so after too many
+ * wrong PINs in a short time every sign-in pauses for a while.
+ */
+const GLOBAL_LIMIT = 10;
+const GLOBAL_WINDOW_MS = 15 * 60_000;
+let globalFailures: number[] = [];
+let globalPauseUntil = 0;
+
+export function resetLoginLimits() {
+  failures.clear();
+  globalFailures = [];
+  globalPauseUntil = 0;
+}
+
 export function createApi(store: Store) {
   const routes: Route[] = [];
   const add = (method: string, path: string, handler: Handler, auth = true) =>
@@ -32,12 +48,20 @@ export function createApi(store: Store) {
   add("POST", "/api/login", ({ req, body }) => {
     const ip = req.socket.remoteAddress ?? "?";
     const f = failures.get(ip);
-    if (f && f.until > Date.now()) throw new HttpError(429, "Too many wrong PINs. Try again in a minute.");
+    const now = Date.now();
+    if (globalPauseUntil > now) throw new HttpError(429, "Too many wrong PINs recently. Sign-in is paused for a few minutes.");
+    if (f && f.until > now) throw new HttpError(429, "Too many wrong PINs. Try again in a minute.");
     const personId = String(body?.personId ?? "");
     if (!store.family().people.some((p) => p.id === personId)) throw new HttpError(400, "Pick who you are.");
     if (!store.checkPin(String(body?.pin ?? ""))) {
       const count = (f?.count ?? 0) + 1;
-      failures.set(ip, { count, until: count >= 5 ? Date.now() + 60_000 : 0 });
+      failures.set(ip, { count, until: count >= 5 ? now + 60_000 : 0 });
+      globalFailures = [...globalFailures.filter((t) => t > now - GLOBAL_WINDOW_MS), now];
+      if (globalFailures.length >= GLOBAL_LIMIT) {
+        globalPauseUntil = now + GLOBAL_WINDOW_MS;
+        globalFailures = [];
+        console.warn(`[security] ${GLOBAL_LIMIT} wrong PINs in 15 minutes - sign-in paused for 15 minutes`);
+      }
       throw new HttpError(401, "That PIN isn't right.");
     }
     failures.delete(ip);

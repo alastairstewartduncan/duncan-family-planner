@@ -30,8 +30,9 @@
         </intent>
     </queries>
 
-    <!-- usesCleartextTraffic: the home server is reached over Tailscale, which
-         encrypts all traffic between devices, so plain http is fine there. -->
+    <!-- The home server is reached over HTTPS with its own pinned certificate.
+         usesCleartextTraffic stays on only so a server set to plain http on the
+         home network (https: false in config.json) still works. -->
     <application
         android:name=".FamilyPlannerApp"
         android:allowBackup="true"

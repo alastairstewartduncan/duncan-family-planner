@@ -37,14 +37,14 @@ for (const [id, value] of Object.entries(seed.recurring ?? {})) store.saveRecurr
 
 const pin = String(seed.pin ?? "").trim();
 if (pin) {
-  if (!/^\d{4,8}$/.test(pin)) {
-    console.error("The PIN must be 4–8 digits.");
+  if (!/^\d{6,8}$/.test(pin)) {
+    console.error("The PIN must be 6–8 digits (the server can be reached from the internet, so short PINs are too easy to guess).");
     process.exit(1);
   }
   store.setPin(pin);
   console.log("✔ Family PIN set (everyone will need to sign in again). You can now remove it from family.json.");
 } else if (!store.hasPin()) {
-  console.error('No PIN set yet. Add "pin": "1234" (4–8 digits) to family.json and run setup again.');
+  console.error('No PIN set yet. Add "pin": "123456" (6–8 digits) to family.json and run setup again.');
   process.exit(1);
 }
 

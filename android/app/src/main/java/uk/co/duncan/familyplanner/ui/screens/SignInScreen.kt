@@ -16,7 +16,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -39,11 +44,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import uk.co.duncan.familyplanner.R
 import uk.co.duncan.familyplanner.data.Person
+import uk.co.duncan.familyplanner.data.UntrustedServerException
 import uk.co.duncan.familyplanner.ui.PersonAvatar
 
 /**
- * Two steps: enter the home server address (Tailscale name of the PC), then
- * pick who you are and enter the family PIN.
+ * Two steps: enter the home server address (the home's static IP, or the PC's
+ * name at home), check its security code the first time, then pick who you are
+ * and enter the family PIN.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -55,6 +62,9 @@ fun SignInScreen(
     onConnect: (String) -> Unit,
     onSignIn: (server: String, personId: String, pin: String) -> Unit,
     onChangeServer: () -> Unit,
+    trustPrompt: UntrustedServerException? = null,
+    onTrust: () -> Unit = {},
+    onDismissTrust: () -> Unit = {},
 ) {
     var server by rememberSaveable { mutableStateOf(initialServer) }
     var personId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -83,8 +93,8 @@ fun SignInScreen(
                 OutlinedTextField(
                     value = server, onValueChange = { server = it.trim() },
                     label = { Text("Home server address") },
-                    placeholder = { Text("e.g. family-pc") },
-                    supportingText = { Text("The PC's Tailscale name — Alastair has it") },
+                    placeholder = { Text("e.g. 81.2.69.160") },
+                    supportingText = { Text("The home's internet address — Alastair has it") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { if (server.isNotBlank()) onConnect(server) }),
@@ -127,5 +137,26 @@ fun SignInScreen(
                 Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
             }
         }
+    }
+
+    trustPrompt?.let { t ->
+        AlertDialog(
+            onDismissRequest = onDismissTrust,
+            icon = { Icon(if (t.changed) Icons.Default.Warning else Icons.Default.Lock, null) },
+            title = { Text(if (t.changed) "Security code has changed" else "Check the security code") },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        if (t.changed) "This server isn't the one this phone trusted before. Only carry on if Alastair has just reinstalled the server and the code below matches the one on the PC."
+                        else "Make sure this matches the security code shown on the family PC. It keeps anyone pretending to be the server out.",
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text(t.securityCode, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            confirmButton = { TextButton(onClick = onTrust) { Text("It matches") } },
+            dismissButton = { TextButton(onClick = onDismissTrust) { Text("Cancel") } },
+        )
     }
 }

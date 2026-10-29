@@ -58,8 +58,7 @@ Open **Brick**. A checklist shows what's left:
 3. **Protect against uninstalling.** Stops the planner being deleted without
    first switching this off in Settings — which Brick blocks while bricked.
 4. **Choose your essential apps.** Phone, Messages, the keyboard and this planner
-   always work. Pick anything else you'd need: Maps, the bus app, the camera,
-   Tailscale.
+   always work. Pick anything else you'd need: Maps, the bus app, the camera.
 5. **Allow notifications** so emergency alerts get through.
 
 ## Using it

@@ -63,6 +63,9 @@ object Repository {
         api.saveCredentials(Credentials(url, res["token"] as String, personId))
     }
 
+    /** The person compared the security code and it matched: pin this server's certificate. */
+    fun trustServer(serverUrl: String, fingerprint: String) = api.trust(serverUrl, fingerprint)
+
     suspend fun signOut() {
         runCatching { api.post("/api/logout") }
         api.clearCredentials()
