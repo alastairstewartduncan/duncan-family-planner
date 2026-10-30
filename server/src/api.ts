@@ -78,7 +78,7 @@ export function createApi(store: Store, info: ServerInfo = { startedAt: Date.now
   // Status for the Windows tray app. Only answers to programs on this PC itself, never to the
   // internet or the home network, and it carries no PINs, tokens or tag secrets.
   add("GET", "/api/admin/status", ({ req }) => {
-    if (!isLocalRequest(req.socket.remoteAddress, req.headers["x-forwarded-for"])) throw new HttpError(404, "Not found");
+    localOnly(req);
     return buildStatus(store, brick, info, loginState());
   }, false);
 
@@ -209,6 +209,8 @@ export function createApi(store: Store, info: ServerInfo = { startedAt: Date.now
     if (!brick.isGuardian(personId)) brick.noteAppsUnlocked(personId);
     return { ok: true };
   });
+  // Phones tell the server which apps they have, so a parent can choose the essential ones from the PC.
+  add("POST", "/api/brick/apps", ({ body, personId }) => brick.reportInstalledApps(personId, body));
   add("PUT", "/api/brick/schedules", guardian(({ body }) => brick.saveSchedules(body)));
   add("POST", "/api/brick/focus", guardian(({ body, personId }) => brick.startFocus(body, personId)));
   add("DELETE", "/api/brick/focus", guardian(({ personId }) => {
@@ -218,6 +220,25 @@ export function createApi(store: Store, info: ServerInfo = { startedAt: Date.now
   add("POST", "/api/brick/pass", guardian(({ body, personId }) => brick.grantPass(body, personId)));
   add("POST", "/api/brick/status", ({ body, personId }) => brick.reportStatus(personId, body));
   add("POST", "/api/brick/events", ({ body, personId }) => brick.reportEvent(personId, body));
+
+  // ---- Controls for the Windows tray app (this PC only) -----------------------------
+  add("GET", "/api/admin/apps", ({ req }) => {
+    localOnly(req);
+    return brick.adminApps();
+  }, false);
+  add("PUT", `/api/admin/apps/${ID}`, ({ req, params, body }) => {
+    localOnly(req, true);
+    return brick.setManagedApps(params[0], body?.allowed ?? null);
+  }, false);
+  add("POST", "/api/admin/focus", ({ req, body }) => {
+    localOnly(req, true);
+    return brick.startFocus(body, brick.adminPerson());
+  }, false);
+  add("DELETE", "/api/admin/focus", ({ req }) => {
+    localOnly(req, true);
+    brick.endFocus(brick.adminPerson());
+    return { ok: true };
+  }, false);
 
   // ---- Dispatcher ------------------------------------------------------------------
   return async function handle(req: IncomingMessage, res: ServerResponse) {
@@ -250,6 +271,14 @@ export function createApi(store: Store, info: ServerInfo = { startedAt: Date.now
       if (process.env.LOG_REQUESTS) console.log(`${req.method} ${url.pathname} ${res.statusCode} ${Date.now() - started}ms`);
     }
   };
+}
+
+/** Requests only from programs on this PC, with the tray app's own header on anything that changes data. */
+function localOnly(req: IncomingMessage, changes = false) {
+  if (!isLocalRequest(req.socket.remoteAddress, req.headers["x-forwarded-for"], req.headers.host ?? "", req.headers.origin)) {
+    throw new HttpError(404, "Not found");
+  }
+  if (changes && req.headers["x-dfp-admin"] !== "tray") throw new HttpError(404, "Not found");
 }
 
 function bearer(req: IncomingMessage): string | undefined {

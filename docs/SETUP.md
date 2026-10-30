@@ -195,13 +195,26 @@ stop and restart it and see how the family's phones are doing.
    phone (bricked or free, blocker on or off, phone-free time today and this week) and recent
    activity.
 
+**Family Focus.** Right-click → *Start Family Focus...* to choose who puts their phone down and
+for how long (30 minutes up to 3 hours, or until you end it). *End Family Focus* ends it. Phones
+lock or unlock within about 30 seconds.
+
+**Phone apps.** Right-click → *Phone apps...* to choose which apps stay open on each person's
+phone while it is bricked. Pick the person, tick *Choose these from this PC*, tick the apps and
+Save. Their phone picks it up within about 30 seconds and the *Choose apps* button on their phone
+is switched off. Untick the box and Save to give the choice back to their phone. Each phone lists
+its apps to the server (at most once a day, or when its apps change), so the list is empty until
+the phone has the latest version of the app and the app blocker is on. An app installed later is
+not allowed until you tick it.
+
 Start, Stop and Restart ask Windows for permission each time, because the server runs as a
 startup task with full rights. Closing the status window only hides it; *Exit tray app* leaves
 the server running.
 
 The tray app reads `https://localhost:<port>/api/admin/status`, which the server only answers
-to programs on the same PC (never over the network or through a proxy) and which carries no
-PINs, tokens or tag secrets. Its own log is `server\logs\tray.log`. To remove it:
+to programs on the same PC (never over the network, through a proxy, or from a web page) and which
+carries no PINs, tokens or tag secrets. The controls (focus and phone apps) use the same
+PC-only address and also need the tray app's own header, so a web page can't trigger them. Its own log is `server\logs\tray.log`. To remove it:
 `powershell -ExecutionPolicy Bypass -File server\windows\tray\install-tray.ps1 -Remove`.
 
 You need to update and restart the server (see above) for the status page to exist.

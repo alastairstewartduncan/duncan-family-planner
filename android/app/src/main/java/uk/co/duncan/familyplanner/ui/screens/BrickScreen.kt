@@ -153,7 +153,15 @@ fun BrickScreen(session: Session.Ready) {
     var askingParentPin by remember { mutableStateOf(false) }
     var settingParentPin by remember { mutableStateOf(false) }
     // Parents change the essential apps freely; everyone else needs a parent to enter the parent PIN first.
-    val requestApps = { if (guardian) choosingApps = true else askingParentPin = true }
+    val requestApps = {
+        if (BrickEngine.appsManaged) {
+            // A parent chooses these from the family server PC, so there is nothing to change here.
+        } else if (guardian) {
+            choosingApps = true
+        } else {
+            askingParentPin = true
+        }
+    }
     var editingSchedule by remember { mutableStateOf<BrickSchedule?>(null) }
     var passFor by remember { mutableStateOf<Person?>(null) }
     var renaming by remember { mutableStateOf<BrickTagInfo?>(null) }
@@ -435,6 +443,7 @@ private fun describe(type: String, detail: String) = when (type) {
     "parent-pin-set" -> "set a new parent PIN"
     "pin-wrong" -> "entered a wrong parent PIN" + if (detail.isNotBlank()) " ($detail)" else ""
     "apps-unlocked" -> "unlocked their essential apps with the parent PIN"
+    "apps-managed" -> "had their essential apps set by a parent" + if (detail.isNotBlank()) " ($detail)" else ""
     else -> type
 }
 
@@ -739,9 +748,11 @@ private fun ScheduleDialog(
 private fun EssentialApps(locked: Boolean, guardian: Boolean, onChoose: () -> Unit) {
     val context = LocalContext.current
     val chosen = remember(locked) { BrickEngine.allowedApps }
+    val managed = BrickEngine.appsManaged
     Text(
         "Phone, messages and this planner always work. " +
-            if (guardian) "Pick anything else you'd need while bricked — maps, the bus app, your camera."
+            if (managed) "A parent chooses the other apps from the family server PC."
+            else if (guardian) "Pick anything else you'd need while bricked — maps, the bus app, your camera."
             else "Changing the other apps needs a parent to enter the parent PIN.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -750,10 +761,10 @@ private fun EssentialApps(locked: Boolean, guardian: Boolean, onChoose: () -> Un
             chosen.map { BrickSetup.label(context, it) }.sorted().forEach { AssistChip(onClick = {}, label = { Text(it) }, enabled = false) }
         }
     }
-    OutlinedButton(onClick = onChoose, enabled = !locked) {
+    OutlinedButton(onClick = onChoose, enabled = !locked && !managed) {
         Icon(Icons.Default.Apps, null)
         Spacer(Modifier.width(6.dp))
-        Text(if (locked) "Unlock to change" else if (guardian) "Choose apps" else "Parent: choose apps")
+        Text(if (managed) "Set by a parent" else if (locked) "Unlock to change" else if (guardian) "Choose apps" else "Parent: choose apps")
     }
 }
 

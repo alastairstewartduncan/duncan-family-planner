@@ -210,6 +210,11 @@ object Repository {
         api.post("/api/brick/parent-pin/check", mapOf("pin" to pin))
     }
 
+    /** Tells the server which apps this phone has, so a parent can choose the essential ones from the PC. */
+    suspend fun reportBrickApps(apps: List<Map<String, String>>) {
+        api.post("/api/brick/apps", mapOf("apps" to apps))
+    }
+
     suspend fun addBrickTag(id: String, kind: TagKind, name: String, hash: String, replace: Boolean = false) {
         api.post(
             "/api/brick/tags",

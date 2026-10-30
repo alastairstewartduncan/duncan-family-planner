@@ -11,9 +11,19 @@ export interface ServerInfo {
   dataDir: string;
 }
 
-/** True only for a connection made from this PC to itself, and not through a proxy. */
-export function isLocalRequest(remoteAddress: string | undefined, forwarded: string | string[] | undefined): boolean {
-  if (forwarded) return false;
+/**
+ * True only for a connection made from this PC to itself: not through a proxy, not from a
+ * web page (browsers add an Origin header to cross-site requests), and addressed to
+ * localhost (which blocks DNS-rebinding tricks).
+ */
+export function isLocalRequest(
+  remoteAddress: string | undefined,
+  forwarded: string | string[] | undefined,
+  host?: string,
+  origin?: string | string[],
+): boolean {
+  if (forwarded || origin) return false;
+  if (host !== undefined && !/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(host)) return false;
   const a = remoteAddress ?? "";
   return a === "127.0.0.1" || a === "::1" || a === "::ffff:127.0.0.1";
 }
@@ -40,6 +50,7 @@ export function buildStatus(store: Store, brick: BrickStore, info: ServerInfo, l
     return {
       id: p.id,
       name: p.name,
+      parent: brick.settings().guardians.includes(p.id),
       signedInPhones: seenBy.get(p.id)?.n ?? 0,
       lastSeenMs: ms(seenBy.get(p.id)?.last),
       phone: st
@@ -78,6 +89,10 @@ export function buildStatus(store: Store, brick: BrickStore, info: ServerInfo, l
     familyName: family.name ?? "",
     people,
     events,
+    focus: (() => {
+      const f = brick.focus();
+      return f ? { active: true, untilMs: ms(f.until), personIds: f.personIds } : { active: false, untilMs: 0, personIds: [] as string[] };
+    })(),
     signIn: {
       pausedUntilMs: login.pausedUntil > Date.now() ? login.pausedUntil : 0,
       recentFailures: login.recentFailures,

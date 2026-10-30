@@ -224,3 +224,73 @@ test("the status for the tray app is for this PC only and carries no secrets", a
   assert.ok(direct.uptimeSeconds >= 5);
   assert.ok(direct.people.every((p: any) => typeof p.phoneFreeWeekMinutes === "number"));
 });
+
+const admin = (method: string, url: string, body?: unknown, headers: Record<string, string> = {}) =>
+  fetch(base + url, {
+    method,
+    headers: { "Content-Type": "application/json", "X-Dfp-Admin": "tray", ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }).then(async (r) => ({ status: r.status, json: (await r.json()) as any }));
+
+test("essential apps can be chosen from the server PC", async () => {
+  // Alfie's phone says which apps it has. Junk entries and repeats are dropped.
+  const rep = await call("alfie", "POST", "/api/brick/apps", {
+    apps: [
+      { pkg: "com.google.android.apps.maps", label: "Maps" },
+      { pkg: "com.zhiliaoapp.musically", label: "TikTok" },
+      { pkg: "com.zhiliaoapp.musically", label: "TikTok again" },
+      { pkg: "not a package", label: "Bad" },
+    ],
+  });
+  assert.equal(rep.status, 200);
+  const listed = await admin("GET", "/api/admin/apps");
+  const alfie = listed.json.people.find((p: any) => p.id === "alfie");
+  assert.deepEqual(alfie.installed.map((a: any) => a.pkg), ["com.google.android.apps.maps", "com.zhiliaoapp.musically"]);
+  assert.equal(alfie.managed, false);
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.managedApps, null);
+
+  // Choosing from the PC puts that list on his phone's snapshot, and nobody else's.
+  const set = await admin("PUT", "/api/admin/apps/alfie", { allowed: ["com.google.android.apps.maps", "bad package"] });
+  assert.equal(set.status, 200);
+  assert.deepEqual(set.json.allowed, ["com.google.android.apps.maps"]);
+  assert.deepEqual((await call("alfie", "GET", "/api/brick")).json.managedApps, ["com.google.android.apps.maps"]);
+  assert.equal((await call("claire", "GET", "/api/brick")).json.managedApps, null);
+  assert.equal((await admin("PUT", "/api/admin/apps/nobody", { allowed: [] })).status, 404);
+
+  // An empty list is a real choice (nothing extra allowed); null hands the choice back to the phone.
+  await admin("PUT", "/api/admin/apps/alfie", { allowed: [] });
+  assert.deepEqual((await call("alfie", "GET", "/api/brick")).json.managedApps, []);
+  await admin("PUT", "/api/admin/apps/alfie", { allowed: null });
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.managedApps, null);
+
+  // Parents can see it happened.
+  const types = ((await call("claire", "GET", "/api/brick")).json.events as any[]).map((e) => e.type);
+  assert.ok(types.includes("apps-managed"));
+});
+
+test("Family Focus can be started and ended from the server PC", async () => {
+  const start = await admin("POST", "/api/admin/focus", { minutes: 60, personIds: ["alfie"] });
+  assert.equal(start.status, 200);
+  const snap = (await call("alfie", "GET", "/api/brick")).json;
+  assert.equal(snap.focus.active, true);
+  assert.deepEqual(snap.focus.personIds, ["alfie"]);
+  assert.equal((await admin("POST", "/api/admin/focus", { minutes: 1 })).status, 400);
+  const status = (await admin("GET", "/api/admin/status")).json;
+  assert.equal(status.focus.active, true);
+  assert.ok(status.focus.untilMs > Date.now());
+  assert.equal(status.people.find((p: any) => p.id === "claire").parent, true);
+  assert.equal((await admin("DELETE", "/api/admin/focus")).status, 200);
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.focus, null);
+  assert.equal(((await admin("GET", "/api/admin/status")).json).focus.active, false);
+});
+
+test("controls from the server PC refuse web pages, proxies and requests without the tray header", async () => {
+  assert.equal((await admin("POST", "/api/admin/focus", { minutes: 30 }, { "X-Dfp-Admin": "" })).status, 404);
+  assert.equal((await admin("POST", "/api/admin/focus", { minutes: 30 }, { "X-Forwarded-For": "203.0.113.9" })).status, 404);
+  assert.equal((await admin("POST", "/api/admin/focus", { minutes: 30 }, { Origin: "https://evil.example" })).status, 404);
+  assert.equal((await admin("PUT", "/api/admin/apps/alfie", { allowed: [] }, { Origin: "https://evil.example" })).status, 404);
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.focus, null); // nothing slipped through
+  const { isLocalRequest } = await import("./admin");
+  assert.equal(isLocalRequest("127.0.0.1", undefined, "localhost:8787", undefined), true);
+  assert.equal(isLocalRequest("127.0.0.1", undefined, "evil.example:8787", undefined), false); // DNS rebinding
+});

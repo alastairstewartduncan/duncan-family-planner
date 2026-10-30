@@ -133,6 +133,8 @@ data class BrickSnapshot(
     val settings: BrickSettings = BrickSettings(),
     val isGuardian: Boolean = false,
     val hasParentPin: Boolean = false,
+    /** Essential apps a parent chose from the server PC for this person, or null when the person chooses on their own phone. */
+    val managedApps: Set<String>? = null,
     val tags: List<BrickTagInfo> = emptyList(),
     val schedules: List<BrickSchedule> = emptyList(),
     val focus: FamilyFocus? = null,
@@ -150,6 +152,7 @@ data class BrickSnapshot(
             settings = BrickSettings.from(m["settings"] as? Map<*, *>),
             isGuardian = m.b("isGuardian"),
             hasParentPin = m.b("hasParentPin"),
+            managedApps = (m["managedApps"] as? List<*>)?.map { it.toString() }?.toSet(),
             tags =m.maps("tags").map(BrickTagInfo::from),
             schedules = m.maps("schedules").map(BrickSchedule::from),
             focus = FamilyFocus.from(m["focus"] as? Map<*, *>),

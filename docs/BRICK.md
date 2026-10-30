@@ -122,6 +122,10 @@ so on.
 - If someone switches off uninstall protection while *unlocked*, they could then
   remove the app. The family is told when protection or the blocker goes off.
 - A person can only change their essential apps while unlocked.
+- **Essential apps chosen from the server PC.** With the Windows tray app, a parent can choose
+  a person's essential apps from the PC (*Phone apps...*). The phone then uses that list, and
+  its own *Choose apps* button is switched off, so the parent PIN isn't needed for that person.
+  Phones report which apps they have so the list can be shown on the PC.
 - **Parent PIN.** Parents can always change their own essential apps. On anyone else's
   phone, **Choose apps** asks for the parent PIN first, and the server checks it, so the
   phone needs a connection. Set it under **Brick → Parents → Set parent PIN** (6–8 digits,

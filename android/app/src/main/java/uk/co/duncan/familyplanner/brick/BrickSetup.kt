@@ -104,6 +104,19 @@ object BrickSetup {
             .sortedBy { it.label.lowercase() }
     }
 
+    /** Package and name of every app someone could choose to keep, without loading icons. */
+    fun launchableLabels(context: Context): List<Pair<String, String>> {
+        val pm = context.packageManager
+        val always = alwaysAllowed(context)
+        val never = neverAllowed(pm)
+        return pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+            .map { it.activityInfo.applicationInfo }
+            .distinctBy { it.packageName }
+            .filter { it.packageName !in always && it.packageName !in never }
+            .map { it.packageName to pm.getApplicationLabel(it).toString() }
+            .sortedBy { it.second.lowercase() }
+    }
+
     /** Sensible essentials to start with: maps, clock, calculator, camera. */
     fun suggestedEssentials(context: Context): Set<String> {
         val candidates = setOf(

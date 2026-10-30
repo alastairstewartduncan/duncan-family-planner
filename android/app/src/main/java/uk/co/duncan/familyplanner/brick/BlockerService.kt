@@ -84,6 +84,7 @@ class BlockerService : AccessibilityService() {
         val snap = Repository.loadBrick() ?: return@withContext
         BrickEngine.flush()
         BrickEngine.pushStatus(this@BlockerService)
+        BrickEngine.reportInstalledApps(this@BlockerService)
         val me = Repository.personId
         val people = Repository.cachedPeople().associate { it.id to it.name }
         val lastSeen = BrickEngine.lastSeenEventId

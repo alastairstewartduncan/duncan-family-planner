@@ -82,12 +82,29 @@ object BrickEngine {
     private val emergencyUntil get() = instant("emergencyUntil")?.takeIf { it.isAfter(Instant.now()) }
     private val overrideKey get() = prefs.getString("overrideKey", null)
 
-    /** Packages the person chose to keep while bricked. */
+    /**
+     * Packages kept open while bricked. A list a parent chose from the server PC wins;
+     * otherwise it is whatever the person chose on this phone.
+     */
     var allowedApps: Set<String>
-        get() = prefs.getStringSet("allowedApps", null) ?: emptySet()
+        get() = snapshot().managedApps ?: (prefs.getStringSet("allowedApps", null) ?: emptySet())
         set(v) { prefs.edit().putStringSet("allowedApps", v).putBoolean("allowedChosen", true).apply() }
 
-    val allowedChosen: Boolean get() = prefs.getBoolean("allowedChosen", false)
+    /** True when a parent chooses this phone's essential apps, so the picker here is switched off. */
+    val appsManaged: Boolean get() = snapshot().managedApps != null
+
+    val allowedChosen: Boolean get() = appsManaged || prefs.getBoolean("allowedChosen", false)
+
+    /** Tells the server which apps this phone has (at most once a day unless the list changes). */
+    suspend fun reportInstalledApps(context: Context) {
+        val apps = BrickSetup.launchableLabels(context)
+        val fingerprint = apps.joinToString("|") { "${it.first}=${it.second}" }.hashCode().toString()
+        val now = System.currentTimeMillis()
+        if (prefs.getString("appsReported", null) == fingerprint && now - prefs.getLong("appsReportedAt", 0L) < 24 * 3_600_000L) return
+        runCatching { Repository.reportBrickApps(apps.map { mapOf("pkg" to it.first, "label" to it.second) }) }
+            .onSuccess { prefs.edit().putString("appsReported", fingerprint).putLong("appsReportedAt", now).apply() }
+            .onFailure { Log.w(TAG, "Couldn't report installed apps: ${it.message}") }
+    }
 
     /** Emergency tags this phone has used, so a spent tag stays spent even offline. */
     private val usedEmergencyTags: Set<String> get() = prefs.getStringSet("usedEmergency", null) ?: emptySet()

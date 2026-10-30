@@ -75,6 +75,8 @@ const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const HASH = /^[0-9a-f]{64}$/;
 const EVENT_TYPES = new Set(["brick", "unbrick", "emergency", "denied", "session", "tamper"]);
 const PARENT_PIN = /^\d{6,8}$/;
+const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/;
+export interface InstalledApp { pkg: string; label: string }
 const PARENT_PIN_KEY = "brickParentPin";
 /** Wrong parent PINs from one person before they have to wait. */
 const PARENT_PIN_TRIES = 5;
@@ -180,6 +182,78 @@ export class BrickStore {
   /** A child opened the essential-apps picker with the parent PIN. */
   noteAppsUnlocked(personId: string) {
     this.log(personId, "apps-unlocked", "");
+  }
+
+  // ---- Essential apps, chosen from the server PC ------------------------------------
+  // Each phone reports which apps it has. A parent can then pick, from the PC, which of
+  // them stay open while that person is bricked. A person with no list here simply keeps
+  // choosing on their own phone.
+
+  managedApps(): Record<string, string[]> {
+    return this.kv<Record<string, string[]>>("brickManagedApps", {});
+  }
+
+  installedApps(): Record<string, InstalledApp[]> {
+    return this.kv<Record<string, InstalledApp[]>>("brickInstalledApps", {});
+  }
+
+  /** The phone lists the apps it has. Unchanged lists are ignored so phones don't refetch for nothing. */
+  reportInstalledApps(personId: string, body: any): { ok: true } {
+    const raw = Array.isArray(body?.apps) ? (body.apps as any[]) : [];
+    const seen = new Set<string>();
+    const apps: InstalledApp[] = [];
+    for (const a of raw) {
+      const pkg = String(a?.pkg ?? "");
+      if (!PACKAGE.test(pkg) || pkg.length > 200 || seen.has(pkg)) continue;
+      seen.add(pkg);
+      apps.push({ pkg, label: String(a?.label ?? pkg).slice(0, 80) });
+      if (apps.length >= 600) break;
+    }
+    apps.sort((x, y) => x.label.toLowerCase().localeCompare(y.label.toLowerCase()));
+    const all = this.installedApps();
+    if (JSON.stringify(all[personId]) === JSON.stringify(apps)) return { ok: true };
+    all[personId] = apps;
+    this.store.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run("brickInstalledApps", JSON.stringify(all));
+    return { ok: true };
+  }
+
+  /** allowed = null hands the choice back to the person's own phone. */
+  setManagedApps(personId: string, allowed: unknown): { personId: string; allowed: string[] | null } {
+    if (!this.store.family().people.some((p) => p.id === personId)) throw new HttpError(404, "Unknown person.");
+    const all = this.managedApps();
+    if (allowed === null || allowed === undefined) {
+      delete all[personId];
+      this.setKv("brickManagedApps", all);
+      this.log(personId, "apps-managed", "back on their own phone");
+      return { personId, allowed: null };
+    }
+    if (!Array.isArray(allowed)) throw new HttpError(400, "allowed must be a list of apps.");
+    const list = [...new Set((allowed as unknown[]).map(String))].filter((pkg) => PACKAGE.test(pkg) && pkg.length <= 200).slice(0, 600);
+    all[personId] = list;
+    this.setKv("brickManagedApps", all);
+    this.log(personId, "apps-managed", `${list.length} app${list.length === 1 ? "" : "s"} set by a parent`);
+    return { personId, allowed: list };
+  }
+
+  /** What the tray app shows: every person, the apps their phone reported, and what is allowed. */
+  adminApps() {
+    const managed = this.managedApps();
+    const installed = this.installedApps();
+    return {
+      people: this.store.family().people.map((p) => ({
+        id: p.id,
+        name: p.name,
+        managed: managed[p.id] !== undefined,
+        allowed: managed[p.id] ?? [],
+        installed: installed[p.id] ?? [],
+      })),
+    };
+  }
+
+  /** Who a change made from the server PC is recorded against: the first parent. */
+  adminPerson(): string {
+    return this.settings().guardians[0] ?? this.store.family().people[0]?.id ?? "server";
   }
 
   // ---- Tags ------------------------------------------------------------------------
@@ -450,6 +524,7 @@ export class BrickStore {
       settings: this.settings(),
       isGuardian: this.isGuardian(personId),
       hasParentPin: this.hasParentPin(),
+      managedApps: this.managedApps()[personId] ?? null,
       tags: this.tags(),
       schedules: this.schedules(),
       focus: this.focus(),
