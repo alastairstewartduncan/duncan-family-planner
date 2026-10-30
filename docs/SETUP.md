@@ -180,3 +180,28 @@ Google Calendar. This uses a free Google Cloud "service account" — no billing 
 | Morning notification didn't come | Notifications allowed for the app? Today ticked under More → Morning reminder? Some phones (Samsung, Xiaomi) need the app set to *Unrestricted* battery use. Use **More → Send me a test**. |
 | Events not in Google Calendar | Calendar ID saved in the app? Calendar shared with the service account? `google-key.json` in the server folder and the task restarted? Check `logs\server.log`. |
 | PC sleeps | Settings → System → Power → set *Sleep* to Never when plugged in, or accept that the app shows the last plan while it sleeps. |
+
+## Optional: tray app for the home server (Windows)
+
+A little house icon by the clock shows whether the server is running, and lets you start,
+stop and restart it and see how the family's phones are doing.
+
+1. Double-click `server\windows\tray\install-tray.cmd` (no administrator needed). It starts
+   now and again every time you sign in to Windows.
+2. Look for the house icon. If it is hidden, click the ^ arrow by the clock and drag it onto
+   the taskbar. **Green** = running, **amber** = running but worth a look (sign-in paused, or
+   someone's app blocker is off), **red** = not running, **grey** = checking.
+3. Double-click it (or right-click → *Show status*) for uptime, backups, sign-in state, each
+   phone (bricked or free, blocker on or off, phone-free time today and this week) and recent
+   activity.
+
+Start, Stop and Restart ask Windows for permission each time, because the server runs as a
+startup task with full rights. Closing the status window only hides it; *Exit tray app* leaves
+the server running.
+
+The tray app reads `https://localhost:<port>/api/admin/status`, which the server only answers
+to programs on the same PC (never over the network or through a proxy) and which carries no
+PINs, tokens or tag secrets. Its own log is `server\logs\tray.log`. To remove it:
+`powershell -ExecutionPolicy Bypass -File server\windows\tray\install-tray.ps1 -Remove`.
+
+You need to update and restart the server (see above) for the status page to exist.

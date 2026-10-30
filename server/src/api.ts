@@ -1,6 +1,7 @@
 // HTTP API. Plain node:http with a tiny router, so there's nothing extra to install.
 import { IncomingMessage, ServerResponse } from "node:http";
 import { DateTime } from "luxon";
+import { ServerInfo, buildStatus, isLocalRequest } from "./admin";
 import { BrickStore } from "./brick";
 import { DATE_FMT } from "./plan";
 import { HttpError, Store } from "./store";
@@ -34,7 +35,13 @@ export function resetLoginLimits() {
   globalPauseUntil = 0;
 }
 
-export function createApi(store: Store) {
+/** Sign-in pause state, for the tray app's status view. */
+function loginState() {
+  const now = Date.now();
+  return { pausedUntil: globalPauseUntil, recentFailures: globalFailures.filter((t) => t > now - GLOBAL_WINDOW_MS).length };
+}
+
+export function createApi(store: Store, info: ServerInfo = { startedAt: Date.now(), port: 0, https: false, dataDir: "" }) {
   const routes: Route[] = [];
   const add = (method: string, path: string, handler: Handler, auth = true) =>
     routes.push({ method, pattern: new RegExp(`^${path}$`), auth, handler });
@@ -66,6 +73,13 @@ export function createApi(store: Store) {
     }
     failures.delete(ip);
     return { token: store.createToken(personId), personId };
+  }, false);
+
+  // Status for the Windows tray app. Only answers to programs on this PC itself, never to the
+  // internet or the home network, and it carries no PINs, tokens or tag secrets.
+  add("GET", "/api/admin/status", ({ req }) => {
+    if (!isLocalRequest(req.socket.remoteAddress, req.headers["x-forwarded-for"])) throw new HttpError(404, "Not found");
+    return buildStatus(store, brick, info, loginState());
   }, false);
 
   // ---- Signed in -----------------------------------------------------------------

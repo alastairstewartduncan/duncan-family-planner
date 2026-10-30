@@ -40,7 +40,7 @@ function housekeeping() {
 housekeeping();
 setInterval(housekeeping, 10 * 60 * 1000).unref();
 
-const handler = createApi(store);
+const handler = createApi(store, { startedAt: Date.now(), port: config.port, https: config.https, dataDir: config.dataDir });
 let server: ReturnType<typeof createServer>;
 async function start() {
   if (config.https) {

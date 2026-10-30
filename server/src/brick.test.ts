@@ -194,3 +194,33 @@ test("a separate parent PIN guards a child's essential apps", async () => {
   assert.equal((await call("alfie", "POST", "/api/brick/parent-pin/check", { pin: "135790" })).status, 429);
   assert.equal((await call("alastair", "POST", "/api/brick/parent-pin/check", { pin: "135790" })).status, 200);
 });
+
+test("the status for the tray app is for this PC only and carries no secrets", async () => {
+  const { isLocalRequest, buildStatus } = await import("./admin");
+  assert.equal(isLocalRequest("127.0.0.1", undefined), true);
+  assert.equal(isLocalRequest("::1", undefined), true);
+  assert.equal(isLocalRequest("::ffff:127.0.0.1", undefined), true);
+  assert.equal(isLocalRequest("192.168.1.20", undefined), false);
+  assert.equal(isLocalRequest("203.0.113.9", undefined), false);
+  assert.equal(isLocalRequest("127.0.0.1", "203.0.113.9"), false); // came through a proxy
+
+  // Over the real socket (this test connects from 127.0.0.1) it answers, with no sign-in needed.
+  const res = await fetch(base + "/api/admin/status");
+  assert.equal(res.status, 200);
+  const status = (await res.json()) as any;
+  assert.equal(status.ok, true);
+  assert.deepEqual(status.people.map((p: any) => p.id).sort(), ["alastair", "alfie", "claire"]);
+  assert.equal(status.parentPinSet, true);
+  assert.ok(status.uptimeSeconds >= 0);
+  const text = JSON.stringify(status);
+  assert.ok(!text.includes(tokens.alfie) && !text.includes("135790") && !text.includes("scrypt"));
+
+  // A request that claims to come through a proxy is refused.
+  const proxied = await fetch(base + "/api/admin/status", { headers: { "X-Forwarded-For": "203.0.113.9" } });
+  assert.equal(proxied.status, 404);
+
+  // Same builder directly: Alfie's phone-free time shows up per person.
+  const direct = buildStatus(store, new (await import("./brick")).BrickStore(store), { startedAt: Date.now() - 5000, port: 1, https: false, dataDir: dir }, { pausedUntil: 0, recentFailures: 0 });
+  assert.ok(direct.uptimeSeconds >= 5);
+  assert.ok(direct.people.every((p: any) => typeof p.phoneFreeWeekMinutes === "number"));
+});
