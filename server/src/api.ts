@@ -47,7 +47,7 @@ export function createApi(store: Store, info: ServerInfo = { startedAt: Date.now
     routes.push({ method, pattern: new RegExp(`^${path}$`), auth, handler });
 
   // ---- Public ------------------------------------------------------------------
-  add("GET", "/api/health", () => ({ ok: true, revision: store.revision(), hasPin: store.hasPin() }), false);
+  add("GET", "/api/health", () => ({ ok: true, revision: store.revision(), hasPin: store.hasPin(), uptimeSeconds: Math.round((Date.now() - info.startedAt) / 1000) }), false);
 
   // Names and colours only, for the "who are you?" picker on the sign-in screen.
   add("GET", "/api/people", () => store.family().people, false);
@@ -343,6 +343,12 @@ function readJson(req: IncomingMessage): Promise<any> {
 function send(res: ServerResponse, status: number, data: unknown) {
   if (res.headersSent) return;
   const body = JSON.stringify(data);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'",
+  });
   res.end(body);
 }

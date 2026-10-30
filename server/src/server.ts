@@ -8,6 +8,12 @@ import { loadConfig } from "./config";
 import { DAYS_AHEAD, Store } from "./store";
 import { loadOrCreateTls } from "./tls";
 
+// Put the time on every log line so the log file is useful after the fact.
+for (const level of ["log", "warn", "error"] as const) {
+  const original = console[level].bind(console);
+  console[level] = (...args: unknown[]) => original(new Date().toISOString(), ...args);
+}
+
 const config = loadConfig();
 const store = new Store(path.join(config.dataDir, "planner.db"));
 
@@ -61,10 +67,22 @@ start().catch((e) => {
   process.exit(1);
 });
 
+// Stop taking new requests, let in-flight ones finish (max 5 s), then close the database cleanly.
+let stopping = false;
 function shutdown() {
-  server?.close();
-  store.db.close();
-  process.exit(0);
+  if (stopping) return;
+  stopping = true;
+  console.log("Shutting down...");
+  const finish = () => {
+    try { store.db.close(); } catch { /* already closed */ }
+    process.exit(0);
+  };
+  setTimeout(finish, 5000).unref();
+  if (server) server.close(finish); else finish();
 }
+
+// A crash is logged with its time, then the process exits so the Windows startup task restarts it.
+process.on("uncaughtException", (e) => { console.error("Uncaught error, restarting", e); process.exit(1); });
+process.on("unhandledRejection", (e) => { console.error("Unhandled promise rejection, restarting", e); process.exit(1); });
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
