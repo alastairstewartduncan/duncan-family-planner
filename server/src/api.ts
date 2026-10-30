@@ -204,6 +204,10 @@ export function createApi(store: Store, info: ServerInfo = { startedAt: Date.now
     return { ok: true };
   }));
   // Anyone signed in may try the parent PIN: it is how a child's phone proves a parent is present.
+  add("PUT", "/api/brick/recovery", guardian(({ body, personId }) => {
+    brick.setRecoveryCode(personId, String(body?.code ?? ""));
+    return { ok: true };
+  }));
   add("POST", "/api/brick/parent-pin/check", ({ body, personId }) => {
     if (!brick.checkParentPin(personId, String(body?.pin ?? ""))) throw new HttpError(401, "That parent PIN isn't right.");
     if (!brick.isGuardian(personId)) brick.noteAppsUnlocked(personId);
@@ -229,6 +233,11 @@ export function createApi(store: Store, info: ServerInfo = { startedAt: Date.now
   add("PUT", `/api/admin/apps/${ID}`, ({ req, params, body }) => {
     localOnly(req, true);
     return brick.setManagedApps(params[0], body?.allowed ?? null);
+  }, false);
+  add("PUT", "/api/admin/recovery", ({ req, body }) => {
+    localOnly(req, true);
+    brick.setRecoveryCode(brick.adminPerson(), String(body?.code ?? ""));
+    return { ok: true };
   }, false);
   add("POST", "/api/admin/focus", ({ req, body }) => {
     localOnly(req, true);

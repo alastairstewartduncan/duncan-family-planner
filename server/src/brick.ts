@@ -2,7 +2,7 @@
 // apps until someone taps their phone on a registered NFC "brick" tag. The
 // phones do the locking themselves (so it works offline); the server keeps the
 // shared rules, the tag list and what everyone's phone is doing.
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { pbkdf2Sync, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { DateTime } from "luxon";
 import { HttpError, Store } from "./store";
 
@@ -24,6 +24,7 @@ export interface BrickSettings {
   guardians: string[]; // person ids who can change the rules ([] = anyone, until someone is chosen)
   emergencyMinutes: number; // how long an emergency tap unlocks a phone for
   rearmAfterEmergency: boolean; // an emergency tag stops working once used, until a guardian re-arms it
+  maxBrickMinutes: number; // a phone someone bricked themselves unlocks by itself after this long (0 = no limit)
 }
 
 export interface BrickSchedule {
@@ -70,10 +71,15 @@ export interface BrickEvent {
   minutes: number; // for "session": how long the phone was bricked
 }
 
-const DEFAULT_SETTINGS: BrickSettings = { guardians: [], emergencyMinutes: 60, rearmAfterEmergency: true };
+const DEFAULT_SETTINGS: BrickSettings = { guardians: [], emergencyMinutes: 60, rearmAfterEmergency: true, maxBrickMinutes: 0 };
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const HASH = /^[0-9a-f]{64}$/;
-const EVENT_TYPES = new Set(["brick", "unbrick", "emergency", "denied", "session", "tamper"]);
+const EVENT_TYPES = new Set(["brick", "unbrick", "emergency", "denied", "session", "tamper", "recovery"]);
+// A recovery code is checked on the phone itself (it must work offline), so a copy of its hash sits on every phone.
+// That is why it has to be long and mixed: 8 to 32 letters and digits with at least one of each.
+const RECOVERY_CODE = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{8,32}$/;
+const RECOVERY_ITERATIONS = 200_000;
+export interface RecoveryHash { salt: string; iterations: number; hash: string }
 const PARENT_PIN = /^\d{6,8}$/;
 const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/;
 export interface InstalledApp { pkg: string; label: string }
@@ -132,8 +138,38 @@ export class BrickStore {
       next.emergencyMinutes = Math.min(Math.max(Math.round(Number(input.emergencyMinutes) || 60), 5), 24 * 60);
     }
     if (input.rearmAfterEmergency !== undefined) next.rearmAfterEmergency = !!input.rearmAfterEmergency;
+    if (input.maxBrickMinutes !== undefined) {
+      const m = Math.round(Number(input.maxBrickMinutes) || 0);
+      if (m !== 0 && (m < 15 || m > 24 * 60)) throw new HttpError(400, "A brick can be limited to between 15 minutes and a day, or not limited at all.");
+      next.maxBrickMinutes = m;
+    }
     this.setKv("brickSettings", next);
     return next;
+  }
+
+  // ---- Recovery code ---------------------------------------------------------------
+  // One code, set by a parent, that unlocks any phone even with no signal. The server keeps only a
+  // salted hash and sends that to the phones, which check what is typed on their own.
+
+  recovery(): RecoveryHash | null {
+    const row = this.store.db.prepare("SELECT value FROM kv WHERE key = ?").get("brickRecovery") as { value: string } | undefined;
+    if (!row) return null;
+    const r = JSON.parse(row.value) as RecoveryHash;
+    return { salt: r.salt, iterations: r.iterations, hash: r.hash };
+  }
+
+  hasRecovery(): boolean {
+    return this.recovery() !== null;
+  }
+
+  setRecoveryCode(personId: string, code: string) {
+    if (!RECOVERY_CODE.test(code)) {
+      throw new HttpError(400, "The recovery code must be 8 to 32 letters and digits, with at least one of each.");
+    }
+    const salt = randomBytes(16);
+    const hash = pbkdf2Sync(code, salt, RECOVERY_ITERATIONS, 32, "sha256");
+    this.setKv("brickRecovery", { salt: salt.toString("hex"), iterations: RECOVERY_ITERATIONS, hash: hash.toString("hex") });
+    this.log(personId, "recovery-set", "");
   }
 
   // ---- Parent PIN ------------------------------------------------------------------
@@ -524,6 +560,7 @@ export class BrickStore {
       settings: this.settings(),
       isGuardian: this.isGuardian(personId),
       hasParentPin: this.hasParentPin(),
+      recovery: this.recovery(),
       managedApps: this.managedApps()[personId] ?? null,
       tags: this.tags(),
       schedules: this.schedules(),

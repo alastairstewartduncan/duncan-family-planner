@@ -152,6 +152,7 @@ fun BrickScreen(session: Session.Ready) {
     var choosingApps by remember { mutableStateOf(false) }
     var askingParentPin by remember { mutableStateOf(false) }
     var settingParentPin by remember { mutableStateOf(false) }
+    var settingRecovery by remember { mutableStateOf(false) }
     // Parents change the essential apps freely; everyone else needs a parent to enter the parent PIN first.
     val requestApps = {
         if (BrickEngine.appsManaged) {
@@ -299,6 +300,13 @@ fun BrickScreen(session: Session.Ready) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedButton(onClick = { settingParentPin = true }) { Text(if (data.hasParentPin) "Change parent PIN" else "Set parent PIN") }
+                Text(
+                    if (data.recovery != null) "A recovery code is set. A parent can type it on any locked family phone to unlock it, even with no signal."
+                    else "No recovery code yet. Set one so a parent can unlock any phone without a Brick or a signal.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = { settingRecovery = true }) { Text(if (data.recovery != null) "Change recovery code" else "Set recovery code") }
             }
 
             // ---- Recent activity ----
@@ -309,7 +317,7 @@ fun BrickScreen(session: Session.Ready) {
                     Text(
                         "${e.at?.let { BrickEngine.formatTime(it) } ?: ""}  ·  $who ${describe(e.type, e.detail)}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (e.type in listOf("emergency", "tamper")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (e.type in listOf("emergency", "tamper", "recovery")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -332,6 +340,15 @@ fun BrickScreen(session: Session.Ready) {
             hasParentPin = data.hasParentPin,
             onDismiss = { askingParentPin = false },
             onVerified = { askingParentPin = false; choosingApps = true },
+        )
+    }
+    if (settingRecovery) {
+        SetRecoveryDialog(
+            onDismiss = { settingRecovery = false },
+            onSave = { code ->
+                settingRecovery = false
+                scope.safeLaunch(snackbar, "Recovery code saved. Write it down and keep it safe.") { Repository.setBrickRecovery(code) }
+            },
         )
     }
     if (settingParentPin) {
@@ -418,10 +435,12 @@ fun BrickScreen(session: Session.Ready) {
         )
     }
     if (editingParents) {
-        ParentsDialog(data, family.people, onDismiss = { editingParents = false }, onSave = { guardians, minutes, rearm ->
+        ParentsDialog(data, family.people, onDismiss = { editingParents = false }, onSave = { guardians, minutes, rearm, maxBrick ->
             editingParents = false
             scope.safeLaunch(snackbar, "Saved") {
-                Repository.saveBrickSettings(mapOf("guardians" to guardians, "emergencyMinutes" to minutes, "rearmAfterEmergency" to rearm))
+                Repository.saveBrickSettings(
+                    mapOf("guardians" to guardians, "emergencyMinutes" to minutes, "rearmAfterEmergency" to rearm, "maxBrickMinutes" to maxBrick),
+                )
             }
         })
     }
@@ -441,6 +460,8 @@ private fun describe(type: String, detail: String) = when (type) {
     "emergency-sealed" -> "sealed a new emergency tag"
     "rearmed" -> "re-armed the emergency tag"
     "parent-pin-set" -> "set a new parent PIN"
+    "recovery" -> "unlocked their phone with the recovery code" + if (detail.isNotBlank()) " ($detail)" else ""
+    "recovery-set" -> "set a new recovery code"
     "pin-wrong" -> "entered a wrong parent PIN" + if (detail.isNotBlank()) " ($detail)" else ""
     "apps-unlocked" -> "unlocked their essential apps with the parent PIN"
     "apps-managed" -> "had their essential apps set by a parent" + if (detail.isNotBlank()) " ($detail)" else ""
@@ -820,6 +841,52 @@ private fun ParentPinDialog(hasParentPin: Boolean, onDismiss: () -> Unit, onVeri
     )
 }
 
+/** A parent chooses the one recovery code for every family phone. Phones hold only a hash, so it has to be long and mixed. */
+@Composable
+private fun SetRecoveryDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    val context = LocalContext.current
+    var code by remember { mutableStateOf("") }
+    val ok = code.length in 8..32 && code.any { it.isLetter() } && code.any { it.isDigit() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Recovery code") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "One code for every family phone. A parent types it on a locked phone to unlock it, even with no signal. " +
+                        "8 to 32 letters and digits, with at least one of each. Write it down and keep it safe: " +
+                        "the family is told each time it is used.",
+                )
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { v -> code = v.filter { it.isLetterOrDigit() && it.code < 128 }.take(32) },
+                    label = { Text("Recovery code") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { code = newRecoveryCode() }) { Text("Make one for me") }
+                    OutlinedButton(enabled = ok, onClick = {
+                        context.getSystemService(android.content.ClipboardManager::class.java)
+                            ?.setPrimaryClip(android.content.ClipData.newPlainText("Recovery code", code))
+                    }) { Text("Copy") }
+                }
+            }
+        },
+        confirmButton = { TextButton(enabled = ok, onClick = { onSave(code) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private fun newRecoveryCode(): String {
+    val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+    val rng = java.security.SecureRandom()
+    var code: String
+    do {
+        code = (1..12).map { alphabet[rng.nextInt(alphabet.length)] }.joinToString("")
+    } while (!(code.any { it.isLetter() } && code.any { it.isDigit() }))
+    return code
+}
+
 /** A parent chooses or changes the parent PIN. It has to be different from the family PIN the children know. */
 @Composable
 private fun SetParentPinDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
@@ -1087,8 +1154,10 @@ private fun ChoiceDialog(title: String, body: String, options: List<Pair<String,
 }
 
 @Composable
-private fun ParentsDialog(data: BrickSnapshot, people: List<Person>, onDismiss: () -> Unit, onSave: (List<String>, Int, Boolean) -> Unit) {
+@OptIn(ExperimentalLayoutApi::class)
+private fun ParentsDialog(data: BrickSnapshot, people: List<Person>, onDismiss: () -> Unit, onSave: (List<String>, Int, Boolean, Int) -> Unit) {
     var guardians by remember { mutableStateOf(data.settings.guardians.ifEmpty { people.map { it.id } }) }
+    var maxBrick by remember { mutableIntStateOf(data.settings.maxBrickMinutes) }
     var minutes by remember { mutableIntStateOf(data.settings.emergencyMinutes) }
     var rearm by remember { mutableStateOf(data.settings.rearmAfterEmergency) }
     AlertDialog(
@@ -1104,6 +1173,12 @@ private fun ParentsDialog(data: BrickSnapshot, people: List<Person>, onDismiss: 
                         FilterChip(selected = minutes == m, onClick = { minutes = m }, label = { Text(if (m < 60) "$m min" else "${m / 60} h") })
                     }
                 }
+                Text("A brick someone starts themselves ends after", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0 to "No limit", 60 to "1 h", 120 to "2 h", 240 to "4 h", 480 to "8 h", 720 to "12 h").forEach { (m, label) ->
+                        FilterChip(selected = maxBrick == m, onClick = { maxBrick = m }, label = { Text(label) })
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("One use, then re-arm", style = MaterialTheme.typography.bodyLarge)
@@ -1114,7 +1189,7 @@ private fun ParentsDialog(data: BrickSnapshot, people: List<Person>, onDismiss: 
                 }
             }
         },
-        confirmButton = { TextButton(enabled = guardians.isNotEmpty(), onClick = { onSave(guardians, minutes, rearm) }) { Text("Save") } },
+        confirmButton = { TextButton(enabled = guardians.isNotEmpty(), onClick = { onSave(guardians, minutes, rearm, maxBrick) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

@@ -294,3 +294,66 @@ test("controls from the server PC refuse web pages, proxies and requests without
   assert.equal(isLocalRequest("127.0.0.1", undefined, "localhost:8787", undefined), true);
   assert.equal(isLocalRequest("127.0.0.1", undefined, "evil.example:8787", undefined), false); // DNS rebinding
 });
+
+test("a child can't end Family Focus, a parent can", async () => {
+  assert.equal((await call("claire", "POST", "/api/brick/focus", { minutes: 60 })).status, 200);
+  assert.equal((await call("alfie", "DELETE", "/api/brick/focus")).status, 403);
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.focus.active, true); // still on
+  assert.equal((await call("alfie", "POST", "/api/brick/pass", { personId: "alfie", minutes: 30 })).status, 403);
+  assert.equal((await call("claire", "DELETE", "/api/brick/focus")).status, 200);
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.focus, null);
+});
+
+test("one recovery code, set by a parent, is checked by the phones with only a hash", async () => {
+  const { pbkdf2Sync } = await import("node:crypto");
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.recovery, null);
+
+  // Only a parent can set it, and it has to be long and mixed because phones hold its hash.
+  assert.equal((await call("alfie", "PUT", "/api/brick/recovery", { code: "Mango4Plum77" })).status, 403);
+  for (const weak of ["", "abc12", "12345678", "abcdefgh", "has space 12ab", "cafécafe12", "x".repeat(40) + "1"]) {
+    assert.equal((await call("claire", "PUT", "/api/brick/recovery", { code: weak })).status, 400, weak);
+  }
+  assert.equal((await call("claire", "PUT", "/api/brick/recovery", { code: "Mango4Plum77" })).status, 200);
+
+  // Every phone gets the same salted hash and nothing it could read the code from.
+  const a = (await call("alfie", "GET", "/api/brick")).json;
+  const c = (await call("claire", "GET", "/api/brick")).json;
+  assert.deepEqual(a.recovery, c.recovery);
+  assert.ok(a.recovery.iterations >= 100_000);
+  const expect = pbkdf2Sync("Mango4Plum77", Buffer.from(a.recovery.salt, "hex"), a.recovery.iterations, 32, "sha256").toString("hex");
+  assert.equal(a.recovery.hash, expect); // this is exactly what a phone computes to check a typed code
+  assert.notEqual(a.recovery.hash, pbkdf2Sync("mango4plum77", Buffer.from(a.recovery.salt, "hex"), a.recovery.iterations, 32, "sha256").toString("hex"));
+  assert.ok(!JSON.stringify(a).includes("Mango4Plum77"));
+
+  // Changing it replaces it for everyone.
+  assert.equal((await call("alastair", "PUT", "/api/brick/recovery", { code: "Lemon8Grove22" })).status, 200);
+  const b = (await call("alfie", "GET", "/api/brick")).json.recovery;
+  assert.notEqual(b.hash, a.recovery.hash);
+  assert.notEqual(b.salt, a.recovery.salt);
+
+  // A phone can report using it (it may be offline when it happens), and parents see it.
+  assert.equal((await call("alfie", "POST", "/api/brick/events", { type: "recovery", detail: "Family Focus" })).status, 200);
+  const events = (await call("claire", "GET", "/api/brick")).json.events as any[];
+  assert.ok(events.some((e) => e.type === "recovery" && e.personId === "alfie" && e.detail === "Family Focus"));
+  assert.ok(events.some((e) => e.type === "recovery-set"));
+
+  // The server PC can set it too (this is what the tray app does), and the status shows it.
+  assert.equal((await admin("PUT", "/api/admin/recovery", { code: "tooshort" })).status, 400);
+  assert.equal((await admin("PUT", "/api/admin/recovery", { code: "Cedar5Quill99" })).status, 200);
+  assert.equal((await admin("PUT", "/api/admin/recovery", { code: "Cedar5Quill99" }, { Origin: "https://evil.example" })).status, 404);
+  assert.equal(((await admin("GET", "/api/admin/status")).json).recoverySet, true);
+});
+
+test("parents can limit how long someone's own brick lasts", async () => {
+  assert.equal((await call("claire", "GET", "/api/brick")).json.settings.maxBrickMinutes, 0);
+  assert.equal((await call("alfie", "PUT", "/api/brick/settings", { maxBrickMinutes: 60 })).status, 403);
+  assert.equal((await call("claire", "PUT", "/api/brick/settings", { maxBrickMinutes: 5 })).status, 400);
+  assert.equal((await call("claire", "PUT", "/api/brick/settings", { maxBrickMinutes: 5000 })).status, 400);
+  const set = await call("claire", "PUT", "/api/brick/settings", { maxBrickMinutes: 240 });
+  assert.equal(set.status, 200);
+  assert.equal(set.json.maxBrickMinutes, 240);
+  assert.deepEqual(set.json.guardians, ["claire", "alastair"]); // other settings untouched
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.settings.maxBrickMinutes, 240);
+  assert.equal(((await admin("GET", "/api/admin/status")).json).maxBrickMinutes, 240);
+  assert.equal((await call("claire", "PUT", "/api/brick/settings", { maxBrickMinutes: 0 })).json.maxBrickMinutes, 0);
+});

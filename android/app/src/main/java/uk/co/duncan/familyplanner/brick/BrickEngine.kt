@@ -11,17 +11,21 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import uk.co.duncan.familyplanner.data.BrickSchedule
 import uk.co.duncan.familyplanner.data.BrickSnapshot
 import uk.co.duncan.familyplanner.data.Repository
 import uk.co.duncan.familyplanner.data.TagKind
+import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 
 /** Why the phone is locked (or not). */
 enum class LockReason { None, Manual, Focus, Schedule }
@@ -50,6 +54,15 @@ sealed interface TapResult {
     data class ParentChoice(val state: LockState, val tagName: String) : TapResult // focus/schedule + a parent tapped
     data class Denied(val message: String) : TapResult
     data class Unknown(val message: String) : TapResult
+}
+
+/** What happened when someone typed the recovery code on a locked phone. */
+sealed interface RecoveryResult {
+    data class Unlocked(val label: String) : RecoveryResult
+    data class Wrong(val triesLeft: Int) : RecoveryResult
+    data class Waiting(val seconds: Long) : RecoveryResult
+    object NotSet : RecoveryResult
+    object NotLocked : RecoveryResult
 }
 
 /**
@@ -131,7 +144,13 @@ object BrickEngine {
         if (me == null) return LockState.Open
         val overrideKey = if (ignoreOverride) null else this.overrideKey
         // Bricking yourself (Brick button or a tag) always wins: you chose it, and a tag undoes it.
-        manualSince?.let { return LockState(true, LockReason.Manual, null, "Bricked", true, it) }
+        val brickedAt = manualSince
+        if (brickedAt != null) {
+            val max = snap.settings.maxBrickMinutes
+            val endsAt = if (max > 0) brickedAt.plusSeconds(max * 60L) else null
+            if (endsAt == null || endsAt.isAfter(now)) return LockState(true, LockReason.Manual, endsAt, "Bricked", true, brickedAt)
+            // A parent's maximum brick length has passed, so this brick is over.
+        }
 
         val emergency = emergencyUntil
         if (emergency != null) return LockState(false, emergencyUntil = emergency)
@@ -193,6 +212,7 @@ object BrickEngine {
      */
     fun refresh(context: Context): LockState {
         init(context)
+        expireManualBrick()
         val next = evaluate()
         val before = _state.value
         _state.value = next
@@ -225,6 +245,82 @@ object BrickEngine {
             prefs.edit().remove("overrideKey").apply()
         }
         return next
+    }
+
+    /** A brick someone started themselves ends by itself once a parent's maximum length has passed. */
+    private fun expireManualBrick() {
+        val since = manualSince ?: return
+        val max = snapshot().settings.maxBrickMinutes
+        if (max > 0 && !since.plusSeconds(max * 60L).isAfter(Instant.now())) {
+            prefs.edit().remove("manualSince").apply()
+            queueEvent("unbrick", detail = "Maximum brick length reached")
+        }
+    }
+
+    // ---- Recovery code -----------------------------------------------------------------
+
+    private const val RECOVERY_TRIES = 5
+
+    /**
+     * The family's recovery code unlocks this phone whatever is locking it (a brick, Family Focus or a
+     * schedule), with no signal needed: the typed code is checked here against the salted hash the
+     * home server sent earlier. Wrong guesses are limited and every use is reported to the family.
+     */
+    suspend fun useRecoveryCode(context: Context, typed: String): RecoveryResult = mutex.withLock {
+        init(context)
+        val now = System.currentTimeMillis()
+        val waitUntil = prefs.getLong("recoveryWaitUntil", 0L)
+        if (waitUntil > now) return RecoveryResult.Waiting((waitUntil - now + 999) / 1000)
+        val recovery = snapshot().recovery ?: return RecoveryResult.NotSet
+        val locked = evaluate()
+        if (!locked.locked) return RecoveryResult.NotLocked
+
+        val ok = withContext(Dispatchers.Default) { recoveryMatches(typed.trim(), recovery) }
+        if (!ok) {
+            val fails = prefs.getInt("recoveryFails", 0) + 1
+            if (fails >= RECOVERY_TRIES) {
+                val rounds = prefs.getInt("recoveryLockouts", 0)
+                val minutes = minOf(5L shl rounds.coerceAtMost(5), 120L) // 5, 10, 20, 40, 80, then 120
+                prefs.edit().putInt("recoveryFails", 0).putInt("recoveryLockouts", rounds + 1)
+                    .putLong("recoveryWaitUntil", now + minutes * 60_000L).apply()
+                queueEvent("denied", detail = "Wrong recovery code, locked out for $minutes min")
+                return RecoveryResult.Waiting(minutes * 60)
+            }
+            prefs.edit().putInt("recoveryFails", fails).apply()
+            queueEvent("denied", detail = "Wrong recovery code")
+            return RecoveryResult.Wrong(RECOVERY_TRIES - fails)
+        }
+
+        prefs.edit().putInt("recoveryFails", 0).putInt("recoveryLockouts", 0).remove("recoveryWaitUntil").apply()
+        // Undo a brick someone started, then any Family Focus or schedule that would still lock the phone.
+        val label = locked.label
+        if (locked.reason == LockReason.Manual) prefs.edit().remove("manualSince").apply()
+        val still = evaluate()
+        if (still.locked) prefs.edit().putString("overrideKey", still.overrideKey).apply()
+        queueEvent("recovery", detail = label)
+        refresh(context)
+        RecoveryResult.Unlocked(label)
+    }
+
+    private fun recoveryMatches(typed: String, r: uk.co.duncan.familyplanner.data.BrickRecovery): Boolean {
+        val salt = hexToBytes(r.salt) ?: return false
+        val expected = hexToBytes(r.hash) ?: return false
+        if (typed.length !in 8..32 || r.iterations !in 10_000..2_000_000) return false
+        val spec = PBEKeySpec(typed.toCharArray(), salt, r.iterations, expected.size * 8)
+        return try {
+            val out = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+            MessageDigest.isEqual(out, expected)
+        } catch (e: Exception) {
+            Log.w(TAG, "Recovery check failed: ${e.message}")
+            false
+        } finally {
+            spec.clearPassword()
+        }
+    }
+
+    private fun hexToBytes(s: String): ByteArray? {
+        if (s.isEmpty() || s.length % 2 != 0 || !s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return null
+        return ByteArray(s.length / 2) { i -> s.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
     }
 
     // ---- Tapping a tag -----------------------------------------------------------------
@@ -321,7 +417,7 @@ object BrickEngine {
         return when (state.reason) {
             LockReason.Focus -> "Family Focus is on$until. Ask $ask to end it or give you a pass."
             LockReason.Schedule -> "${state.label}$until. Ask $ask for a pass."
-            LockReason.Manual -> "Tap your phone on a Brick to unlock."
+            LockReason.Manual -> "Tap your phone on a Brick to unlock." + (state.until?.let { " It also ends by itself at ${formatTime(it)}." } ?: "")
             LockReason.None -> ""
         }
     }

@@ -29,16 +29,20 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Nfc
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +62,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -138,6 +144,7 @@ private val Ember = Color(0xFFF2A48F)
 @Composable
 private fun BlockScreen(state: LockState, onLaunch: (String) -> Unit) {
     val context = LocalContext.current
+    var showRecovery by remember { mutableStateOf(false) }
     val apps by produceState(initialValue = emptyList<Pair<String, ImageBitmap?>>()) {
         value = (BrickEngine.allowedApps - BrickSetup.neverAllowed(context.packageManager))
             .mapNotNull { pkg ->
@@ -222,7 +229,65 @@ private fun BlockScreen(state: LockState, onLaunch: (String) -> Unit) {
             color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp, textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().border(1.dp, Ember.copy(alpha = 0.3f), RoundedCornerShape(12.dp)).padding(12.dp),
         )
+        Spacer(Modifier.height(12.dp))
+        TextButton(onClick = { showRecovery = true }) {
+            Text("Use recovery code", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+        }
     }
+    if (showRecovery) RecoveryDialog(onDismiss = { showRecovery = false })
+}
+
+/** A parent types the family recovery code to unlock this phone. It is checked on the phone, so it works offline. */
+@Composable
+private fun RecoveryDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var code by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Recovery code") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("A parent can type the family recovery code to unlock this phone. It works without a signal, and the family is told when it's used.")
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { v -> code = v.filter { it.isLetterOrDigit() && it.code < 128 }.take(32) },
+                    label = { Text("Recovery code") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    isError = message != null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = code.length >= 8 && !busy, onClick = {
+                busy = true
+                message = null
+                scope.launch {
+                    val result = BrickEngine.useRecoveryCode(context, code)
+                    busy = false
+                    when (result) {
+                        is RecoveryResult.Unlocked -> onDismiss()
+                        is RecoveryResult.NotLocked -> onDismiss()
+                        is RecoveryResult.Wrong -> {
+                            code = ""
+                            message = "That isn't the recovery code. ${result.triesLeft} left before a wait."
+                        }
+                        is RecoveryResult.Waiting -> {
+                            code = ""
+                            message = "Too many wrong codes. Try again in ${human(Duration.ofSeconds(result.seconds))}."
+                        }
+                        is RecoveryResult.NotSet -> message = "No recovery code has been set yet. A parent can set one in the planner under Brick, Parents."
+                    }
+                }
+            }) { Text(if (busy) "Checking..." else "Unlock") }
+        },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 fun human(d: Duration): String {

@@ -98,6 +98,8 @@ function Describe-Event($e) {
     "parent-pin-set"   { "set a new parent PIN" }
     "pin-wrong"        { if ($e.detail) { "entered a wrong parent PIN ($($e.detail))" } else { "entered a wrong parent PIN" } }
     "apps-unlocked"    { "unlocked their essential apps with the parent PIN" }
+    "recovery"         { if ($e.detail) { "unlocked their phone with the recovery code ($($e.detail))" } else { "unlocked their phone with the recovery code" } }
+    "recovery-set"     { "set a new recovery code" }
     "apps-managed"     { if ($e.detail) { "had their essential apps set by a parent ($($e.detail))" } else { "had their essential apps set by a parent" } }
     default            { [string]$e.type }
   }
@@ -249,7 +251,7 @@ function New-StatusForm {
   $f = New-Object System.Windows.Forms.Form
   $f.Text = "Duncan Family Planner server"
   $f.StartPosition = "CenterScreen"
-  $f.Size = New-Object System.Drawing.Size 880, 640
+  $f.Size = New-Object System.Drawing.Size 880, 700
   $f.MinimumSize = New-Object System.Drawing.Size 760, 520
   $f.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
   $f.ShowInTaskbar = $true
@@ -266,6 +268,7 @@ function New-StatusForm {
       @{ t = "Restart";     a = { Control-Server "restart" } },
       @{ t = "Family Focus..."; a = { Show-FocusDialog } },
       @{ t = "Phone apps...";   a = { Show-AppsDialog } },
+      @{ t = "Recovery code..."; a = { Show-RecoveryDialog } },
       @{ t = "Open log";    a = { Open-Path (Join-Path $LogDir "server.log") } },
       @{ t = "Backups";     a = { Open-Path (Join-Path $ServerDir "data\backups") } },
       @{ t = "Copy security code"; a = { Copy-SecurityCode } })) {
@@ -283,7 +286,7 @@ function New-StatusForm {
   }
 
   $summary = New-Object System.Windows.Forms.Label
-  $summary.Dock = "Top"; $summary.Height = 170; $summary.Padding = New-Object System.Windows.Forms.Padding 10
+  $summary.Dock = "Top"; $summary.Height = 215; $summary.Padding = New-Object System.Windows.Forms.Padding 10
   $summary.Font = New-Object System.Drawing.Font("Segoe UI", 10)
 
   $evLabel = New-Object System.Windows.Forms.Label
@@ -354,6 +357,7 @@ function Refresh-Ui {
   $menuRestart.Enabled = ($script:Up -eq $true)
   $menuFocus.Enabled = ($script:Up -eq $true)
   $menuApps.Enabled = ($script:Up -eq $true)
+  $menuRecovery.Enabled = ($script:Up -eq $true)
   $menuEndFocus.Enabled = [bool]($s -and $s.focus -and $s.focus.active)
 
   if (-not $script:Form -or -not $script:Form.Visible) { return }
@@ -371,6 +375,8 @@ function Refresh-Ui {
       $lines += "Sign-in:  normal ($($s.signIn.recentFailures) wrong PIN(s) in the last 15 minutes)"
     }
     $lines += "Parent PIN:  $(if ($s.parentPinSet) { 'set' } else { 'not set yet' })"
+    $lines += "Recovery code:  $(if ($s.recoverySet) { 'set' } else { 'NOT SET - set one so a parent can unlock any phone offline' })"
+    $lines += "Longest self-started brick:  $(if ($s.maxBrickMinutes) { Format-Minutes $s.maxBrickMinutes } else { 'no limit' })"
     if ($s.focus -and $s.focus.active) {
       $who = @($s.people | Where-Object { $s.focus.personIds -contains $_.id } | ForEach-Object { $_.name }) -join ", "
       $until = if ($s.focus.untilMs) { "until $((From-Ms $s.focus.untilMs).ToString('HH:mm'))" } else { "until you end it" }
@@ -407,7 +413,7 @@ function Refresh-Ui {
       $item = New-Object System.Windows.Forms.ListViewItem $(if ($when) { $when.ToString("ddd d MMM, HH:mm") } else { "" })
       [void]$item.SubItems.Add([string]$e.person)
       [void]$item.SubItems.Add((Describe-Event $e))
-      if ($e.type -in @("emergency", "tamper", "pin-wrong")) { $item.ForeColor = [System.Drawing.Color]::FromArgb(180, 40, 40) }
+      if ($e.type -in @("emergency", "tamper", "pin-wrong", "recovery")) { $item.ForeColor = [System.Drawing.Color]::FromArgb(180, 40, 40) }
       [void]$ui.Events.Items.Add($item)
     }
   }
@@ -652,6 +658,97 @@ function Save-Apps {
   Show-Balloon "Saved" $msg "Info"
 }
 
+# -- The recovery code: one code, set here or on a parent's phone, that unlocks any family phone offline --
+$script:RecoveryUi = $null
+
+function New-RecoveryCode {
+  $alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+  $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
+  $buf = New-Object byte[] 1
+  do {
+    $sb = New-Object System.Text.StringBuilder
+    while ($sb.Length -lt 12) {
+      $rng.GetBytes($buf)
+      if ($buf[0] -lt 224) { [void]$sb.Append($alphabet[$buf[0] % $alphabet.Length]) }   # 224 = 4 x 56, so no bias
+    }
+    $code = $sb.ToString()
+  } while (-not ($code -match "[A-Za-z]" -and $code -match "[0-9]"))
+  return $code
+}
+
+function Show-RecoveryDialog {
+  if (-not $script:Status) { Show-Problem "The server isn't answering, so the recovery code can't be set."; return }
+  $f = New-DialogForm "Recovery code" 440 340
+  $f.Controls.Add((New-Label "One code for every family phone. A parent types it on a locked phone to unlock it, even with no signal. The family is told each time it is used." 14 10 410 58))
+  $f.Controls.Add((New-Label "8 to 32 letters and digits, with at least one of each. Write it down and keep it somewhere safe." 14 72 410 40))
+
+  $box = New-Object System.Windows.Forms.TextBox
+  $box.Location = New-Object System.Drawing.Point 14, 118
+  $box.Size = New-Object System.Drawing.Size 410, 30
+  $box.MaxLength = 32
+  $box.Font = New-Object System.Drawing.Font("Consolas", 13)
+  $f.Controls.Add($box)
+
+  $gen = New-Object System.Windows.Forms.Button
+  $gen.Text = "Make one for me"
+  $gen.Location = New-Object System.Drawing.Point 14, 160
+  $gen.Size = New-Object System.Drawing.Size 150, 28
+  $gen.Add_Click({ $script:RecoveryUi.Box.Text = New-RecoveryCode })
+  $f.Controls.Add($gen)
+
+  $copy = New-Object System.Windows.Forms.Button
+  $copy.Text = "Copy"
+  $copy.Location = New-Object System.Drawing.Point 174, 160
+  $copy.Size = New-Object System.Drawing.Size 80, 28
+  $copy.Add_Click({ if ($script:RecoveryUi.Box.Text) { [System.Windows.Forms.Clipboard]::SetText($script:RecoveryUi.Box.Text) } })
+  $f.Controls.Add($copy)
+
+  $state = if ($script:Status.recoverySet) { "A recovery code is set. Saving a new one replaces it on every phone." } else { "No recovery code is set yet." }
+  $note = New-Label "$state`nA phone knows the code once it has synced with the server (about 30 seconds when it has a signal)." 14 202 410 60
+  $note.ForeColor = [System.Drawing.Color]::DimGray
+  $f.Controls.Add($note)
+
+  $save = New-Object System.Windows.Forms.Button
+  $save.Text = "Save to all phones"
+  $save.Location = New-Object System.Drawing.Point 14, 286
+  $save.Size = New-Object System.Drawing.Size 160, 30
+  $save.Add_Click({ Save-Recovery })
+  $f.Controls.Add($save)
+  $cancel = New-Object System.Windows.Forms.Button
+  $cancel.Text = "Cancel"
+  $cancel.Location = New-Object System.Drawing.Point 184, 286
+  $cancel.Size = New-Object System.Drawing.Size 90, 30
+  $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+  $f.Controls.Add($cancel)
+  $f.CancelButton = $cancel
+
+  $script:RecoveryUi = @{ Form = $f; Box = $box }
+  [void]$f.ShowDialog()
+  $f.Dispose()
+  $script:RecoveryUi = $null
+}
+
+function Save-Recovery {
+  $ui = $script:RecoveryUi
+  $code = $ui.Box.Text.Trim()
+  if ($code -notmatch '^(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9]{8,32}$') {
+    Show-Problem "The recovery code must be 8 to 32 letters and digits, with at least one letter and one digit."
+    return
+  }
+  try {
+    [void](Invoke-Admin "PUT" "/api/admin/recovery" @{ code = $code })
+  } catch {
+    Show-Problem "The recovery code wasn't saved.`n`n$($_.Exception.Message)"
+    return
+  }
+  $ui.Form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+  $ui.Form.Close()
+  [System.Windows.Forms.MessageBox]::Show(
+    "Saved. The recovery code is:`n`n$code`n`nWrite it down now and keep it somewhere safe. It is not shown again.",
+    "Duncan Family Planner", "OK", "Information") | Out-Null
+  $script:LastPoll = [DateTime]::MinValue
+}
+
 # ---- The tray icon and its menu ----------------------------------------------------------------------------
 $notify = New-Object System.Windows.Forms.NotifyIcon
 $notify.Icon = $icons.grey
@@ -667,6 +764,7 @@ $menuShow.Font = New-Object System.Drawing.Font($menuShow.Font, [System.Drawing.
 $menuFocus = $menu.Items.Add("Start Family Focus...")
 $menuEndFocus = $menu.Items.Add("End Family Focus")
 $menuApps = $menu.Items.Add("Phone apps...")
+$menuRecovery = $menu.Items.Add("Recovery code...")
 [void]$menu.Items.Add("-")
 $menuStart = $menu.Items.Add("Start server")
 $menuStop = $menu.Items.Add("Stop server")
@@ -682,6 +780,7 @@ $menuShow.Add_Click({ Show-Status })
 $menuFocus.Add_Click({ Show-FocusDialog })
 $menuEndFocus.Add_Click({ End-Focus })
 $menuApps.Add_Click({ Show-AppsDialog })
+$menuRecovery.Add_Click({ Show-RecoveryDialog })
 $menuStart.Add_Click({ Control-Server "start" })
 $menuStop.Add_Click({ Control-Server "stop" })
 $menuRestart.Add_Click({ Control-Server "restart" })

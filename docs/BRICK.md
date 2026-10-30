@@ -126,6 +126,21 @@ so on.
   a person's essential apps from the PC (*Phone apps...*). The phone then uses that list, and
   its own *Choose apps* button is switched off, so the parent PIN isn't needed for that person.
   Phones report which apps they have so the list can be shown on the PC.
+- **Recovery code.** One code, set by a parent (Brick, Parents, *Set recovery code*, or from the
+  tray app), the same on every family phone. Anyone who knows it can type it under **Use recovery
+  code** on a locked phone to end whatever is locking it (a brick, Family Focus or a schedule).
+  It is checked on the phone itself, so it **works with no signal**. Because every phone holds a
+  copy of its hash, it has to be long and mixed (8 to 32 letters and digits, at least one of
+  each). Five wrong guesses make that phone wait (5 minutes, then longer each time). Every use
+  is reported to the family and parents get a notification, so write it down somewhere safe and
+  change it if a child ever learns it. A phone knows a new code once it has synced.
+- **Longest self-started brick.** In *Parents & emergency settings*, parents can make a brick
+  someone started themselves (Brick button or a tag) end by itself after 1, 2, 4, 8 or 12 hours.
+  It doesn't affect Family Focus or schedules, which end when they are set to.
+- **Who can end Family Focus.** Only a parent: on a child's phone a tag tap during Family Focus
+  says "Not yet", and the server refuses a child's request. A parent who taps a Brick during
+  Family Focus can choose *Unlock just me* (the Focus carries on for everyone else) or *End Family
+  Focus for everyone*.
 - **Parent PIN.** Parents can always change their own essential apps. On anyone else's
   phone, **Choose apps** asks for the parent PIN first, and the server checks it, so the
   phone needs a connection. Set it under **Brick → Parents → Set parent PIN** (6–8 digits,

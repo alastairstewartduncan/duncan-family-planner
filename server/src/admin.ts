@@ -99,5 +99,7 @@ export function buildStatus(store: Store, brick: BrickStore, info: ServerInfo, l
     },
     database: { bytes: databaseBytes, backups: backupCount, latestBackup },
     parentPinSet: brick.hasParentPin(),
+    recoverySet: brick.hasRecovery(),
+    maxBrickMinutes: brick.settings().maxBrickMinutes,
   };
 }

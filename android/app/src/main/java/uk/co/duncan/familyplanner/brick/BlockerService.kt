@@ -97,6 +97,10 @@ class BlockerService : AccessibilityService() {
                         this@BlockerService, e.id, "$who used the emergency tag",
                         "$who's phone is unlocked for ${snap.settings.emergencyMinutes} minutes. Check they're OK.",
                     )
+                    "recovery" -> if (snap.isGuardian) BrickNotifications.alert(
+                        this@BlockerService, e.id, "$who's phone was unlocked with the recovery code",
+                        "Used to end: ${e.detail.ifBlank { "a lock" }}. If that wasn't a parent, change the recovery code.",
+                    )
                     "tamper" -> if (snap.isGuardian) BrickNotifications.alert(
                         this@BlockerService, e.id, "$who's app blocker was switched off",
                         "Brick can't lock $who's phone until it's switched back on.",

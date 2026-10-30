@@ -45,15 +45,21 @@ data class BrickSettings(
     val guardians: List<String> = emptyList(),
     val emergencyMinutes: Int = 60,
     val rearmAfterEmergency: Boolean = true,
+    /** A brick someone started themselves ends by itself after this many minutes (0 = no limit). */
+    val maxBrickMinutes: Int = 0,
 ) {
     companion object {
         fun from(m: Map<*, *>?) = if (m == null) BrickSettings() else BrickSettings(
             guardians = m.strings("guardians"),
             emergencyMinutes = m.n("emergencyMinutes", 60),
             rearmAfterEmergency = m.b("rearmAfterEmergency", true),
+            maxBrickMinutes = m.n("maxBrickMinutes", 0),
         )
     }
 }
+
+/** Salted hash of the family's recovery code, so a phone can check a typed code with no signal. */
+data class BrickRecovery(val salt: String, val iterations: Int, val hash: String)
 
 data class BrickSchedule(
     val id: String = "",
@@ -133,6 +139,7 @@ data class BrickSnapshot(
     val settings: BrickSettings = BrickSettings(),
     val isGuardian: Boolean = false,
     val hasParentPin: Boolean = false,
+    val recovery: BrickRecovery? = null,
     /** Essential apps a parent chose from the server PC for this person, or null when the person chooses on their own phone. */
     val managedApps: Set<String>? = null,
     val tags: List<BrickTagInfo> = emptyList(),
@@ -152,6 +159,11 @@ data class BrickSnapshot(
             settings = BrickSettings.from(m["settings"] as? Map<*, *>),
             isGuardian = m.b("isGuardian"),
             hasParentPin = m.b("hasParentPin"),
+            recovery = (m["recovery"] as? Map<*, *>)?.let { r ->
+                val salt = r.sOrNull("salt")
+                val hash = r.sOrNull("hash")
+                if (salt != null && hash != null) BrickRecovery(salt, r.n("iterations", 200_000), hash.lowercase()) else null
+            },
             managedApps = (m["managedApps"] as? List<*>)?.map { it.toString() }?.toSet(),
             tags =m.maps("tags").map(BrickTagInfo::from),
             schedules = m.maps("schedules").map(BrickSchedule::from),

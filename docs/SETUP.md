@@ -116,26 +116,28 @@ opened.
 **Releases:** push a tag (`git tag v2.0.0 && git push --tags`) and the APK is
 attached to a GitHub Release with a download link you can open on each phone.
 
-### Optional: sign the APK with your own key
+### Updating the app over the top (do this once)
 
-Unsigned CI builds are debug builds, which is fine for family use. For a release
-build (and smooth updates over the top), create a key once and add it to GitHub
-**Settings → Secrets and variables → Actions**:
+Android only installs an update over an app when the new APK is signed with the **same key**
+as the one already on the phone. Until a permanent key is saved in GitHub, every build is
+signed with a throwaway key, so each release means uninstalling the app first (and with
+uninstall protection on, switching that off first).
 
-```powershell
-keytool -genkeypair -v -keystore duncan-planner.jks -alias planner -keyalg RSA -keysize 2048 -validity 10000
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("duncan-planner.jks")) | Set-Clipboard
-```
+1. On your PC, double-click `android\signing\create-signing-key.cmd`. It makes the key in
+   `%USERPROFILE%\DuncanPlannerSigningKey` and saves the four secrets in GitHub. If the GitHub
+   command line (`gh`) isn't installed it opens the GitHub secrets page and the file with the
+   values so you can paste them in by hand.
+2. **Back up that folder somewhere private.** Never put it in the repo or share it. Anyone who
+   has the key could make an APK that installs over the family's app. If you lose it, the next
+   release needs one more uninstall on every phone.
+3. Build a release (push a version tag). It is now signed with your key.
+4. On each phone, **one last time**: turn off uninstall protection (Settings, Security, Device
+   admin apps), uninstall the app, install the new APK, and set Brick up again.
+5. From then on every release installs straight over the top. Sign-in, settings, Brick
+   permissions and uninstall protection are all kept.
 
-| Secret | Value |
-|---|---|
-| `SIGNING_KEYSTORE_BASE64` | paste from the clipboard |
-| `SIGNING_STORE_PASSWORD` | keystore password |
-| `SIGNING_KEY_ALIAS` | `planner` |
-| `SIGNING_KEY_PASSWORD` | key password |
-
-Keep `duncan-planner.jks` safe and out of the repo. Note: switching from debug to
-release builds means uninstalling the debug app once first.
+The script never replaces an existing key (that would force another reinstall). To save the
+GitHub secrets again from the same key, run it with `-Resend`.
 
 ## 6. Optional: Google Calendar sync
 
@@ -198,6 +200,10 @@ stop and restart it and see how the family's phones are doing.
 **Family Focus.** Right-click → *Start Family Focus...* to choose who puts their phone down and
 for how long (30 minutes up to 3 hours, or until you end it). *End Family Focus* ends it. Phones
 lock or unlock within about 30 seconds.
+
+**Recovery code.** Right-click → *Recovery code...* to set the one code that unlocks any family
+phone, even with no signal (*Make one for me* picks a good one). It is shown once when you save it:
+write it down. See `docs/BRICK.md`.
 
 **Phone apps.** Right-click → *Phone apps...* to choose which apps stay open on each person's
 phone while it is bricked. Pick the person, tick *Choose these from this PC*, tick the apps and

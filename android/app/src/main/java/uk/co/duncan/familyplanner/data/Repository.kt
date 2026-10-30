@@ -200,6 +200,11 @@ object Repository {
         api.put("/api/brick/settings", fields); changed()
     }
 
+    /** A parent sets the one recovery code that unlocks any family phone, even offline. */
+    suspend fun setBrickRecovery(code: String) {
+        api.put("/api/brick/recovery", mapOf("code" to code)); changed()
+    }
+
     /** A parent chooses the PIN that guards things a child's phone could change for itself. */
     suspend fun setBrickParentPin(pin: String) {
         api.put("/api/brick/parent-pin", mapOf("pin" to pin)); changed()
