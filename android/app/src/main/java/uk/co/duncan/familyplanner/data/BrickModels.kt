@@ -132,6 +132,7 @@ data class BrickSession(val end: Instant, val minutes: Int) {
 data class BrickSnapshot(
     val settings: BrickSettings = BrickSettings(),
     val isGuardian: Boolean = false,
+    val hasParentPin: Boolean = false,
     val tags: List<BrickTagInfo> = emptyList(),
     val schedules: List<BrickSchedule> = emptyList(),
     val focus: FamilyFocus? = null,
@@ -148,7 +149,8 @@ data class BrickSnapshot(
         fun from(m: Map<*, *>) = BrickSnapshot(
             settings = BrickSettings.from(m["settings"] as? Map<*, *>),
             isGuardian = m.b("isGuardian"),
-            tags = m.maps("tags").map(BrickTagInfo::from),
+            hasParentPin = m.b("hasParentPin"),
+            tags =m.maps("tags").map(BrickTagInfo::from),
             schedules = m.maps("schedules").map(BrickSchedule::from),
             focus = FamilyFocus.from(m["focus"] as? Map<*, *>),
             passes = (m["passes"] as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -84,6 +85,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
@@ -147,6 +150,10 @@ fun BrickScreen(session: Session.Ready) {
 
     var pairing by remember { mutableStateOf<TagKind?>(null) }
     var choosingApps by remember { mutableStateOf(false) }
+    var askingParentPin by remember { mutableStateOf(false) }
+    var settingParentPin by remember { mutableStateOf(false) }
+    // Parents change the essential apps freely; everyone else needs a parent to enter the parent PIN first.
+    val requestApps = { if (guardian) choosingApps = true else askingParentPin = true }
     var editingSchedule by remember { mutableStateOf<BrickSchedule?>(null) }
     var passFor by remember { mutableStateOf<Person?>(null) }
     var renaming by remember { mutableStateOf<BrickTagInfo?>(null) }
@@ -167,7 +174,7 @@ fun BrickScreen(session: Session.Ready) {
                 }
             })
 
-            SetupChecklist(resumes, data, onChooseApps = { choosingApps = true })
+            SetupChecklist(resumes, data, onChooseApps = requestApps)
 
             // ---- My phone-free log ----
             SessionLog(data.mySessions, lock)
@@ -240,7 +247,7 @@ fun BrickScreen(session: Session.Ready) {
 
             // ---- My essential apps ----
             SectionLabel("Your essential apps", Modifier.padding(top = 8.dp))
-            EssentialApps(locked = lock.locked, onChoose = { choosingApps = true })
+            EssentialApps(locked = lock.locked, guardian = guardian, onChoose = requestApps)
 
             // ---- Bricks ----
             SectionLabel("Bricks", Modifier.padding(top = 8.dp))
@@ -277,6 +284,13 @@ fun BrickScreen(session: Session.Ready) {
                     color = if (names.isEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedButton(onClick = { editingParents = true }) { Text("Parents & emergency settings") }
+                Text(
+                    if (data.hasParentPin) "A parent PIN is set. Anyone who isn't a parent needs it to change their essential apps."
+                    else "No parent PIN yet, so only parents can change essential apps. Set one so you can unlock it on a child's phone when needed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = { settingParentPin = true }) { Text(if (data.hasParentPin) "Change parent PIN" else "Set parent PIN") }
             }
 
             // ---- Recent activity ----
@@ -305,6 +319,22 @@ fun BrickScreen(session: Session.Ready) {
         )
     }
     if (choosingApps) AppPickerDialog(onDismiss = { choosingApps = false })
+    if (askingParentPin) {
+        ParentPinDialog(
+            hasParentPin = data.hasParentPin,
+            onDismiss = { askingParentPin = false },
+            onVerified = { askingParentPin = false; choosingApps = true },
+        )
+    }
+    if (settingParentPin) {
+        SetParentPinDialog(
+            onDismiss = { settingParentPin = false },
+            onSave = { pin ->
+                settingParentPin = false
+                scope.safeLaunch(snackbar, "Parent PIN saved") { Repository.setBrickParentPin(pin) }
+            },
+        )
+    }
     editingSchedule?.let { s ->
         ScheduleDialog(
             initial = s, people = family.people,
@@ -402,6 +432,9 @@ private fun describe(type: String, detail: String) = when (type) {
     "tag-added" -> "added the Brick \"$detail\""
     "emergency-sealed" -> "sealed a new emergency tag"
     "rearmed" -> "re-armed the emergency tag"
+    "parent-pin-set" -> "set a new parent PIN"
+    "pin-wrong" -> "entered a wrong parent PIN" + if (detail.isNotBlank()) " ($detail)" else ""
+    "apps-unlocked" -> "unlocked their essential apps with the parent PIN"
     else -> type
 }
 
@@ -703,11 +736,13 @@ private fun ScheduleDialog(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun EssentialApps(locked: Boolean, onChoose: () -> Unit) {
+private fun EssentialApps(locked: Boolean, guardian: Boolean, onChoose: () -> Unit) {
     val context = LocalContext.current
     val chosen = remember(locked) { BrickEngine.allowedApps }
     Text(
-        "Phone, messages and this planner always work. Pick anything else you'd need while bricked — maps, the bus app, your camera.",
+        "Phone, messages and this planner always work. " +
+            if (guardian) "Pick anything else you'd need while bricked — maps, the bus app, your camera."
+            else "Changing the other apps needs a parent to enter the parent PIN.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (chosen.isNotEmpty()) {
@@ -718,8 +753,94 @@ private fun EssentialApps(locked: Boolean, onChoose: () -> Unit) {
     OutlinedButton(onClick = onChoose, enabled = !locked) {
         Icon(Icons.Default.Apps, null)
         Spacer(Modifier.width(6.dp))
-        Text(if (locked) "Unlock to change" else "Choose apps")
+        Text(if (locked) "Unlock to change" else if (guardian) "Choose apps" else "Parent: choose apps")
     }
+}
+
+/** A child's phone asks a parent to type the parent PIN, which the server checks, before the app picker opens. */
+@Composable
+private fun ParentPinDialog(hasParentPin: Boolean, onDismiss: () -> Unit, onVerified: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var pin by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    fun submit() {
+        if (busy || pin.length < 6) return
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                Repository.checkBrickParentPin(pin)
+                onVerified()
+            } catch (e: Exception) {
+                error = (e as? ApiException)?.message ?: "Couldn't reach the family server. A parent PIN needs a connection."
+                pin = ""
+            } finally {
+                busy = false
+            }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Parent PIN") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (!hasParentPin) {
+                    Text("No parent PIN has been set yet. Ask a parent to set one on their phone (Brick → Parents), then try again.")
+                } else {
+                    Text("A parent needs to enter the parent PIN to change the essential apps.")
+                    OutlinedTextField(
+                        value = pin, onValueChange = { v -> pin = v.filter(Char::isDigit).take(8) },
+                        label = { Text("Parent PIN") }, singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        isError = error != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            }
+        },
+        confirmButton = {
+            if (hasParentPin) TextButton(enabled = pin.length >= 6 && !busy, onClick = { submit() }) { Text("Unlock") }
+            else TextButton(onClick = onDismiss) { Text("OK") }
+        },
+        dismissButton = { if (hasParentPin) TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** A parent chooses or changes the parent PIN. It has to be different from the family PIN the children know. */
+@Composable
+private fun SetParentPinDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var pin by remember { mutableStateOf("") }
+    var again by remember { mutableStateOf("") }
+    val ok = pin.length >= 6 && pin == again
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Parent PIN") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("6 to 8 digits, and different from the family PIN. Keep it to yourselves: it lets someone change essential apps on a child's phone.")
+                OutlinedTextField(
+                    value = pin, onValueChange = { v -> pin = v.filter(Char::isDigit).take(8) },
+                    label = { Text("New parent PIN") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = again, onValueChange = { v -> again = v.filter(Char::isDigit).take(8) },
+                    label = { Text("Type it again") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    isError = again.isNotEmpty() && pin != again,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton(enabled = ok, onClick = { onSave(pin) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable

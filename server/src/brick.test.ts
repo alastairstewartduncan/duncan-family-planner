@@ -151,3 +151,46 @@ test("phone-free minutes add up into today, the week and a streak", async () => 
   assert.deepEqual(mine.map((x: any) => x.minutes), [75, 90]);
   assert.equal((await call("alfie", "GET", "/api/brick")).json.mySessions.length, 0);
 });
+
+test("a separate parent PIN guards a child's essential apps", async () => {
+  // Parents are already chosen by the first test; nothing is set yet.
+  assert.equal((await call("claire", "GET", "/api/brick")).json.hasParentPin, false);
+  assert.equal((await call("alfie", "POST", "/api/brick/parent-pin/check", { pin: "135790" })).status, 409);
+
+  // Only a parent can set it, it must be 6-8 digits, and not the family PIN everyone knows.
+  assert.equal((await call("alfie", "PUT", "/api/brick/parent-pin", { pin: "135790" })).status, 403);
+  assert.equal((await call("claire", "PUT", "/api/brick/parent-pin", { pin: "1234" })).status, 400);
+  assert.equal((await call("claire", "PUT", "/api/brick/parent-pin", { pin: "12ab56" })).status, 400);
+  store.setPin("246810"); // a 6-digit family PIN, so we can check the clash (this signs everyone out)
+  for (const who of ["claire", "alastair", "alfie"]) {
+    const res = await fetch(base + "/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ personId: who, pin: "246810" }),
+    });
+    tokens[who] = ((await res.json()) as any).token;
+  }
+  assert.equal((await call("claire", "PUT", "/api/brick/parent-pin", { pin: "246810" })).status, 400);
+  assert.equal((await call("claire", "PUT", "/api/brick/parent-pin", { pin: "135790" })).status, 200);
+  assert.equal((await call("alfie", "GET", "/api/brick")).json.hasParentPin, true);
+
+  // The family PIN does not work as a parent PIN, so a child who knows it still can't get in.
+  const wrong = await call("alfie", "POST", "/api/brick/parent-pin/check", { pin: "246810" });
+  assert.equal(wrong.status, 401);
+  const ok = await call("alfie", "POST", "/api/brick/parent-pin/check", { pin: "135790" });
+  assert.equal(ok.status, 200);
+
+  // The server's snapshot never carries the PIN or its hash.
+  const snap = JSON.stringify((await call("alfie", "GET", "/api/brick")).json);
+  assert.ok(!snap.includes("135790"));
+
+  // Parents see the wrong guess and the unlock in Recent.
+  const types = ((await call("claire", "GET", "/api/brick")).json.events as any[]).map((e) => e.type);
+  assert.ok(types.includes("pin-wrong"));
+  assert.ok(types.includes("apps-unlocked"));
+  assert.ok(types.includes("parent-pin-set"));
+
+  // Five wrong guesses make that person wait, even with the right PIN, but not anyone else.
+  for (let i = 0; i < 5; i++) assert.equal((await call("alfie", "POST", "/api/brick/parent-pin/check", { pin: "000000" })).status, 401);
+  assert.equal((await call("alfie", "POST", "/api/brick/parent-pin/check", { pin: "135790" })).status, 429);
+  assert.equal((await call("alastair", "POST", "/api/brick/parent-pin/check", { pin: "135790" })).status, 200);
+});

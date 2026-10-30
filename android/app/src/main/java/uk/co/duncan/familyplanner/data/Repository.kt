@@ -200,6 +200,16 @@ object Repository {
         api.put("/api/brick/settings", fields); changed()
     }
 
+    /** A parent chooses the PIN that guards things a child's phone could change for itself. */
+    suspend fun setBrickParentPin(pin: String) {
+        api.put("/api/brick/parent-pin", mapOf("pin" to pin)); changed()
+    }
+
+    /** Throws when the PIN is wrong (or the server can't be reached), so only a parent gets through. */
+    suspend fun checkBrickParentPin(pin: String) {
+        api.post("/api/brick/parent-pin/check", mapOf("pin" to pin))
+    }
+
     suspend fun addBrickTag(id: String, kind: TagKind, name: String, hash: String, replace: Boolean = false) {
         api.post(
             "/api/brick/tags",

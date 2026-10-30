@@ -185,6 +185,16 @@ export function createApi(store: Store) {
     return { ok: true };
   }));
   add("POST", `/api/brick/tags/${ID}/rearm`, guardian(({ params, personId }) => brick.rearm(params[0], personId)));
+  add("PUT", "/api/brick/parent-pin", guardian(({ body, personId }) => {
+    brick.setParentPin(personId, String(body?.pin ?? ""));
+    return { ok: true };
+  }));
+  // Anyone signed in may try the parent PIN: it is how a child's phone proves a parent is present.
+  add("POST", "/api/brick/parent-pin/check", ({ body, personId }) => {
+    if (!brick.checkParentPin(personId, String(body?.pin ?? ""))) throw new HttpError(401, "That parent PIN isn't right.");
+    if (!brick.isGuardian(personId)) brick.noteAppsUnlocked(personId);
+    return { ok: true };
+  });
   add("PUT", "/api/brick/schedules", guardian(({ body }) => brick.saveSchedules(body)));
   add("POST", "/api/brick/focus", guardian(({ body, personId }) => brick.startFocus(body, personId)));
   add("DELETE", "/api/brick/focus", guardian(({ personId }) => {

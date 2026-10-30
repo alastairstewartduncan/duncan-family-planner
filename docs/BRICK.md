@@ -122,6 +122,15 @@ so on.
 - If someone switches off uninstall protection while *unlocked*, they could then
   remove the app. The family is told when protection or the blocker goes off.
 - A person can only change their essential apps while unlocked.
+- **Parent PIN.** Parents can always change their own essential apps. On anyone else's
+  phone, **Choose apps** asks for the parent PIN first, and the server checks it, so the
+  phone needs a connection. Set it under **Brick → Parents → Set parent PIN** (6–8 digits,
+  and different from the family PIN, which the children know). Five wrong guesses make that
+  person wait five minutes, and **Recent** shows wrong guesses and every time the PIN was
+  used. Until a parent PIN is set, only parents can change essential apps.
+- The parent PIN only guards the picker in the app. It doesn't stop someone clearing the
+  app's data or using developer tools, so keep uninstall protection on and use Android's
+  own Family Link or Digital Wellbeing limits for anything you can't risk.
 - Signing out of the planner ends a manual brick, so no phone is ever stuck.
 
 ## Updating

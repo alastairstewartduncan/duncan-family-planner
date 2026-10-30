@@ -2,7 +2,7 @@
 // apps until someone taps their phone on a registered NFC "brick" tag. The
 // phones do the locking themselves (so it works offline); the server keeps the
 // shared rules, the tag list and what everyone's phone is doing.
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { DateTime } from "luxon";
 import { HttpError, Store } from "./store";
 
@@ -74,6 +74,11 @@ const DEFAULT_SETTINGS: BrickSettings = { guardians: [], emergencyMinutes: 60, r
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const HASH = /^[0-9a-f]{64}$/;
 const EVENT_TYPES = new Set(["brick", "unbrick", "emergency", "denied", "session", "tamper"]);
+const PARENT_PIN = /^\d{6,8}$/;
+const PARENT_PIN_KEY = "brickParentPin";
+/** Wrong parent PINs from one person before they have to wait. */
+const PARENT_PIN_TRIES = 5;
+const PARENT_PIN_WAIT_MS = 5 * 60_000;
 
 export class BrickStore {
   constructor(private store: Store) {
@@ -127,6 +132,54 @@ export class BrickStore {
     if (input.rearmAfterEmergency !== undefined) next.rearmAfterEmergency = !!input.rearmAfterEmergency;
     this.setKv("brickSettings", next);
     return next;
+  }
+
+  // ---- Parent PIN ------------------------------------------------------------------
+  // A second PIN, separate from the family sign-in PIN that every child also knows.
+  // It guards changes a child's phone could otherwise make for itself, such as
+  // which apps stay open while bricked.
+
+  private parentPinFails = new Map<string, { count: number; until: number }>();
+
+  hasParentPin(): boolean {
+    return !!this.store.db.prepare("SELECT 1 FROM kv WHERE key = ?").get(PARENT_PIN_KEY);
+  }
+
+  setParentPin(personId: string, pin: string) {
+    if (!PARENT_PIN.test(pin)) throw new HttpError(400, "The parent PIN must be 6 to 8 digits.");
+    if (this.store.checkPin(pin)) throw new HttpError(400, "Choose a parent PIN that is different from the family PIN.");
+    const salt = randomBytes(16);
+    const hash = scryptSync(pin, salt, 32);
+    this.store.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(PARENT_PIN_KEY, `${salt.toString("hex")}:${hash.toString("hex")}`);
+    this.parentPinFails.clear();
+    this.log(personId, "parent-pin-set", "");
+    this.store.touch();
+  }
+
+  /** True when the PIN is right. Five wrong guesses make that person wait five minutes. */
+  checkParentPin(personId: string, pin: string): boolean {
+    const stored = this.store.db.prepare("SELECT value FROM kv WHERE key = ?").get(PARENT_PIN_KEY) as { value: string } | undefined;
+    if (!stored) throw new HttpError(409, "No parent PIN has been set yet. Ask a parent to set one.");
+    const now = Date.now();
+    const f = this.parentPinFails.get(personId);
+    if (f && f.until > now) throw new HttpError(429, "Too many wrong parent PINs. Try again in a few minutes.");
+    const [salt, hash] = stored.value.split(":").map((h) => Buffer.from(h, "hex"));
+    const candidate = scryptSync(PARENT_PIN.test(pin) ? pin : "", salt, 32);
+    if (PARENT_PIN.test(pin) && candidate.length === hash.length && timingSafeEqual(candidate, hash)) {
+      this.parentPinFails.delete(personId);
+      return true;
+    }
+    const count = (f?.count ?? 0) + 1;
+    const locked = count >= PARENT_PIN_TRIES;
+    this.parentPinFails.set(personId, { count: locked ? 0 : count, until: locked ? now + PARENT_PIN_WAIT_MS : 0 });
+    this.log(personId, "pin-wrong", locked ? "locked out for 5 minutes" : "");
+    return false;
+  }
+
+  /** A child opened the essential-apps picker with the parent PIN. */
+  noteAppsUnlocked(personId: string) {
+    this.log(personId, "apps-unlocked", "");
   }
 
   // ---- Tags ------------------------------------------------------------------------
@@ -396,6 +449,7 @@ export class BrickStore {
     return {
       settings: this.settings(),
       isGuardian: this.isGuardian(personId),
+      hasParentPin: this.hasParentPin(),
       tags: this.tags(),
       schedules: this.schedules(),
       focus: this.focus(),
