@@ -63,6 +63,9 @@ object Repository {
         api.saveCredentials(Credentials(url, res["token"] as String, personId))
     }
 
+    /** The person compared the security code and it matched: pin this server's certificate. */
+    fun trustServer(serverUrl: String, fingerprint: String) = api.trust(serverUrl, fingerprint)
+
     suspend fun signOut() {
         runCatching { api.post("/api/logout") }
         api.clearCredentials()
@@ -172,4 +175,95 @@ object Repository {
     suspend fun clearDoneShopping() {
         api.post("/api/shopping/clear-done"); changed()
     }
+
+    // ---- Brick (phone-free time) ------------------------------------------------------------
+
+    val personId: String? get() = if (::api.isInitialized) api.credentials.value?.personId else null
+
+    /** Family details from the last copy seen, without touching the network. */
+    fun cachedFamily(): Family? = parseFamily(api.cached("/api/family"))
+    fun cachedFamilyTimezone(): String? = cachedFamily()?.timezone
+    fun cachedPeople(): List<Person> = cachedFamily()?.people.orEmpty()
+
+    private fun parseBrick(v: Any?): BrickSnapshot? = (v as? Map<*, *>)?.let(BrickSnapshot::from)
+
+    fun brickFlow(): Flow<BrickSnapshot?> = live("/api/brick", ::parseBrick)
+
+    /** Last copy this phone saw, without touching the network (used by the blocker). */
+    fun cachedBrick(): BrickSnapshot? = parseBrick(api.cached("/api/brick"))
+
+    /** Fresh from the server, or the cached copy when offline. */
+    suspend fun loadBrick(): BrickSnapshot? =
+        runCatching { parseBrick(api.get("/api/brick")) }.getOrElse { cachedBrick() }
+
+    suspend fun saveBrickSettings(fields: Map<String, Any?>) {
+        api.put("/api/brick/settings", fields); changed()
+    }
+
+    /** A parent sets the one recovery code that unlocks any family phone, even offline. */
+    suspend fun setBrickRecovery(code: String) {
+        api.put("/api/brick/recovery", mapOf("code" to code)); changed()
+    }
+
+    /** A parent chooses the PIN that guards things a child's phone could change for itself. */
+    suspend fun setBrickParentPin(pin: String) {
+        api.put("/api/brick/parent-pin", mapOf("pin" to pin)); changed()
+    }
+
+    /** Throws when the PIN is wrong (or the server can't be reached), so only a parent gets through. */
+    suspend fun checkBrickParentPin(pin: String) {
+        api.post("/api/brick/parent-pin/check", mapOf("pin" to pin))
+    }
+
+    /** Tells the server which apps this phone has, so a parent can choose the essential ones from the PC. */
+    suspend fun reportBrickApps(apps: List<Map<String, String>>) {
+        api.post("/api/brick/apps", mapOf("apps" to apps))
+    }
+
+    suspend fun addBrickTag(id: String, kind: TagKind, name: String, hash: String, replace: Boolean = false) {
+        api.post(
+            "/api/brick/tags",
+            mapOf("id" to id, "kind" to if (kind == TagKind.Emergency) "emergency" else "brick", "name" to name, "hash" to hash, "replace" to replace),
+        ); changed()
+    }
+
+    suspend fun renameBrickTag(id: String, name: String) {
+        api.put("/api/brick/tags/$id", mapOf("name" to name)); changed()
+    }
+
+    suspend fun deleteBrickTag(id: String) {
+        api.delete("/api/brick/tags/$id"); changed()
+    }
+
+    suspend fun rearmBrickTag(id: String) {
+        api.post("/api/brick/tags/$id/rearm"); changed()
+    }
+
+    suspend fun saveBrickSchedules(list: List<BrickSchedule>) {
+        api.put("/api/brick/schedules", list.map { it.toMap() }); changed()
+    }
+
+    /** minutes = null runs until a parent ends it. */
+    suspend fun startFamilyFocus(minutes: Int?, personIds: List<String>) {
+        api.post("/api/brick/focus", mapOf("minutes" to minutes, "personIds" to personIds)); changed()
+    }
+
+    suspend fun endFamilyFocus() {
+        api.delete("/api/brick/focus"); changed()
+    }
+
+    /** minutes = 0 cancels the pass. */
+    suspend fun grantBrickPass(personId: String, minutes: Int) {
+        api.post("/api/brick/pass", mapOf("personId" to personId, "minutes" to minutes)); changed()
+    }
+
+    suspend fun reportBrickStatus(fields: Map<String, Any?>) {
+        api.post("/api/brick/status", fields)
+    }
+
+    suspend fun reportBrickEvent(fields: Map<String, Any?>) {
+        api.post("/api/brick/events", fields)
+    }
+
+    fun brickChanged() = changed()
 }

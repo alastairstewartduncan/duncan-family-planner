@@ -158,7 +158,7 @@ fun DayScreen(
             d == null -> Column(Modifier.fillMaxSize().padding(padding).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Text("Can't reach the home server.", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Check Tailscale is connected on this phone and the PC is on. It'll load as soon as it can.",
+                    "Check this phone has internet and the family PC is on. It'll load as soon as it can.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

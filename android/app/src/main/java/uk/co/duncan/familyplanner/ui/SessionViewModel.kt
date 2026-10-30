@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import uk.co.duncan.familyplanner.data.Family
 import uk.co.duncan.familyplanner.data.Person
 import uk.co.duncan.familyplanner.data.Repository
+import uk.co.duncan.familyplanner.data.UntrustedServerException
 
 sealed interface Session {
     data object Loading : Session
@@ -35,6 +36,19 @@ class SessionViewModel : ViewModel() {
     /** Family members offered on the sign-in screen once the server answers. */
     private val _people = MutableStateFlow<List<Person>?>(null)
     val people: StateFlow<List<Person>?> = _people
+
+    /** A server certificate waiting for the person to compare its security code. */
+    private val _trustPrompt = MutableStateFlow<UntrustedServerException?>(null)
+    val trustPrompt: StateFlow<UntrustedServerException?> = _trustPrompt
+
+    fun trustServer() {
+        val p = _trustPrompt.value ?: return
+        _trustPrompt.value = null
+        Repository.trustServer(p.serverUrl, p.fingerprint)
+        connect(p.serverUrl)
+    }
+
+    fun dismissTrust() { _trustPrompt.value = null }
 
     val session: StateFlow<Session> = Repository.credentials.flatMapLatest { c ->
         if (c == null) flowOf(Session.SignedOut)
@@ -72,12 +86,14 @@ class SessionViewModel : ViewModel() {
             block()
         } catch (e: CancellationException) {
             throw e
+        } catch (e: UntrustedServerException) {
+            _trustPrompt.value = e
         } catch (e: java.net.ConnectException) {
-            _error.value = "Can't reach the server. Is the PC on, and is Tailscale connected on this phone?"
+            _error.value = "Can't reach the server. Is the PC on, and is the address right?"
         } catch (e: java.net.SocketTimeoutException) {
-            _error.value = "The server didn't answer in time. Is Tailscale connected?"
+            _error.value = "The server didn't answer in time. Is the PC on, and is the port open on the router?"
         } catch (e: java.net.UnknownHostException) {
-            _error.value = "Can't find that server address. Check it, and that Tailscale is connected."
+            _error.value = "Can't find that server address. Check it and try again."
         } catch (e: Exception) {
             _error.value = e.message ?: e.javaClass.simpleName
         } finally {

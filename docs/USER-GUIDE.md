@@ -7,23 +7,22 @@ Google Calendar.
 
 ## Getting started
 
-1. Install **Tailscale** from the Play Store, sign in with the account Alastair
-   gives you, and leave it switched on. This is what lets your phone reach the
-   family PC from anywhere, including school, work and mobile data.
-2. Install the app (Alastair will send you the link).
-3. Enter the **home server address** (the PC's name, which Alastair will give you)
-   and tap **Connect**.
+1. Install the app (Alastair will send you the link).
+2. Enter the **home server address** (Alastair will give you it) and tap **Connect**.
+3. The first time, the app shows a **security code**. Check it matches the one
+   Alastair has, then tap **It matches**.
 4. Tap your name, enter the **family PIN** and tap **Sign in**. You only do this once.
 5. Allow notifications when asked. That's how the morning plan arrives.
 6. Add the widget (see below) so today's plan is always on your home screen.
 
-## The four tabs
+## The five tabs
 
 | Tab | What it's for |
 |---|---|
 | **Today** | The day's plan. Use the arrows to move a day at a time; the calendar icon jumps back to today. |
 | **Week** | All seven days at a glance, including what's for tea. Tap a day to open it. |
 | **Shopping** | A shared list everyone can add to and tick off. |
+| **Brick** | Phone-free time: tap your phone on a Brick tag to lock all but your essential apps. See [BRICK.md](BRICK.md). |
 | **More** | Regular events, your usual week, reminder time, calendar and family settings. |
 
 ## Planning a day
@@ -142,7 +141,7 @@ then tap **Clear ticked**. The coloured dot shows who added it.
 
 | Question | Answer |
 |---|---|
-| It says it can't reach the home server. | Check Tailscale is switched on, and that the family PC is on. You can still see the last plan you loaded. |
+| It says it can't reach the home server. | Check your phone has internet, and that the family PC is on. You can still see the last plan you loaded. |
 | I didn't get this morning's notification. | Check the app's notifications are on in phone Settings, and that today is ticked under More → Morning reminder. On Samsung or Xiaomi phones, set the app's battery use to *Unrestricted*. |
 | Someone's edit overwrote mine. | Two people saved the same day at once; the last save wins. Re-add your change. |
 | A regular event came back after I deleted it. | Remove it from that day with **Edit day** (not from Regular events). |

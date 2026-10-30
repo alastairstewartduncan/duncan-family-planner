@@ -69,6 +69,11 @@ export class Store {
     this.rev = Math.max(this.rev + 1, Date.now());
   }
 
+  /** Lets other modules (Brick) tell phones that something changed. */
+  touch() {
+    this.bump();
+  }
+
   private tx<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {

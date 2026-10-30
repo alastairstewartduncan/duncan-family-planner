@@ -1,0 +1,161 @@
+# Brick — phone-free time
+
+Brick locks everything on your phone except the apps you really need, until you
+tap the phone on a **Brick**: a small NFC tag stuck somewhere at home. Because
+you have to get up and walk to the tag to unlock, scrolling stops being the easy
+option.
+
+It lives in the planner's **Brick** tab and works without a signal: each phone
+decides for itself when to lock, and the family PC just keeps everyone's rules
+and shows what each phone is doing.
+
+## What's better than a bought Brick
+
+| | Bought Brick | Duncan Family Brick |
+|---|---|---|
+| Tags | One plastic block per phone | As many cheap stickers as you like, shared by the whole family |
+| Family | Each phone on its own | **Family Focus** bricks every phone at once; parents see everyone's status |
+| Schedules | — | Automatic phone-free times (school nights), even offline |
+| Emergencies | 5 "emergency unbricks" anyone can use | **One sealed emergency tag**; using it tells the family and it must be re-armed |
+| Getting round it | Delete the app | Uninstall protection, Settings blocked while bricked, parents told if the blocker is switched off |
+| Passes | — | A parent can unlock someone for 15 min – 2 h from their own phone |
+| Motivation | Time bricked | Today, this week, a daily streak and a 7-day chart for everyone |
+| Copied tags | — | Tags are checked against their factory serial number *and* a secret, and can be locked read-only |
+
+## What to buy
+
+**NTAG215 NFC stickers or cards** (NTAG213 and 216 work too). A pack of 10–20
+costs a few pounds. Cards or key fobs are tougher than stickers; one for the
+emergency tag is a good idea.
+
+## Setting up (parents)
+
+1. Update the app and the home server (see *Updating* below).
+2. On a parent's phone open **Brick → Parents & emergency settings** and tick
+   who's in charge (Claire and Alastair). Until you do, *anyone* can change the
+   rules — so do this first. (Or add `"brick": { "guardians": ["claire", "alastair"] }`
+   to `family.json` and run `npm run setup` again.)
+3. **Add a Brick**: tap **Add a Brick**, name where it'll live ("Kitchen"), leave
+   **Lock the tag** on, tap **Next** and hold a blank tag flat against the back
+   of the phone until it buzzes. Stick it up. Add as many as you like.
+4. **Seal the emergency tag**: tap **Seal an emergency tag**, hold a blank card to
+   the phone, then put it in an envelope somewhere sensible. There can only ever
+   be one — making a new one retires the old one on every phone.
+5. Optional: **Add a phone-free time**, e.g. *School nights*, Alfie, Sun–Thu,
+   21:30 → 07:00.
+
+## Setting up each phone
+
+Open **Brick**. A checklist shows what's left:
+
+1. **Turn on NFC.**
+2. **Switch on the app blocker.** This opens Settings → Accessibility → *Duncan
+   Family Brick* → on. It only sees *which* app is open — never what's on screen,
+   what you type or your messages.
+   - On Android 13 and later it may be greyed out because the app wasn't installed
+     from the Play Store. Tap **App info** → ⋮ (top right) → **Allow restricted
+     settings**, then try again.
+3. **Protect against uninstalling.** Stops the planner being deleted without
+   first switching this off in Settings — which Brick blocks while bricked.
+4. **Choose your essential apps.** Phone, Messages, the keyboard and this planner
+   always work. Pick anything else you'd need: Maps, the bus app, the camera.
+5. **Allow notifications** so emergency alerts get through.
+
+## Using it
+
+- **Brick your phone:** press **Brick** on the home-screen widget (or in the Brick
+  tab). You can also hold the phone to any Brick. Two buzzes = locked.
+- **Unbrick:** walk to a Brick and scan it. One buzz = unlocked, and it tells you
+  how long you were phone-free. Scanning is the only way back, which is the point.
+- **Your usage:** every bricked stretch is recorded. The Brick tab shows today,
+  this week, your streak and a list of your phone-free sessions.
+
+**Add the widget:** long-press an empty spot on your home screen → **Widgets** →
+**Duncan Family Planner** → drag **Brick button** onto the screen. While you're
+bricked it shows how long you've been phone-free.
+- While bricked, opening any other app shows the Brick screen instead, with your
+  essential apps one tap away and a **Phone** button.
+- You can lock the screen, restart the phone or lose signal — it stays bricked.
+
+### Family Focus
+
+A parent taps **Start Family Focus** and picks 30 minutes, 1 hour, 2 hours or
+*until I end it*. Every phone bricks within about 30 seconds. Tapping a Brick
+won't end it for a child — the Brick screen says who to ask. A parent who taps a
+Brick can choose **Unlock just me** or **End Family Focus for everyone**.
+
+### Phone-free times
+
+Schedules lock and unlock phones on their own, with no signal needed. A parent
+tapping a Brick during one can unlock just their own phone until it ends.
+
+### Passes
+
+Tap a person (or the timer icon next to them) to give a 15-minute to 2-hour pass.
+It unlocks their phone straight away, even during Family Focus or a schedule, and
+relocks it when the time is up. Tap again to cancel it.
+
+## The emergency tag
+
+- Unlocks any phone at once for the set time (60 minutes by default), even during
+  Family Focus or a schedule, and even with no signal.
+- Every other phone gets an alert: *"Alfie used the emergency tag"*.
+- It then stops working until a parent taps **Re-arm** (you can turn this off
+  under *Parents & emergency settings*).
+- Calls, including 999, work while bricked anyway — the tag is for when you need
+  the rest of the phone.
+
+## What parents see
+
+The **Brick** tab shows each person: bricked or not, for how long, any pass, how
+long they've been phone-free this week, and when their phone last checked in.
+**⚠ App blocker is off** (and a notification) means someone switched it off in
+Settings. **Recent** lists the last emergency taps, passes, refused unlocks and
+so on.
+
+## Limits worth knowing
+
+- A phone with **no NFC** can't use Bricks, but can still be included in Family
+  Focus, schedules and passes.
+- Brick relies on Android's accessibility service. Booting into **safe mode**
+  turns it off; the parents' screen will show the blocker as off.
+- If someone switches off uninstall protection while *unlocked*, they could then
+  remove the app. The family is told when protection or the blocker goes off.
+- A person can only change their essential apps while unlocked.
+- **Essential apps chosen from the server PC.** With the Windows tray app, a parent can choose
+  a person's essential apps from the PC (*Phone apps...*). The phone then uses that list, and
+  its own *Choose apps* button is switched off, so the parent PIN isn't needed for that person.
+  Phones report which apps they have so the list can be shown on the PC.
+- **Recovery code.** One code, set by a parent (Brick, Parents, *Set recovery code*, or from the
+  tray app), the same on every family phone. Anyone who knows it can type it under **Use recovery
+  code** on a locked phone to end whatever is locking it (a brick, Family Focus or a schedule).
+  It is checked on the phone itself, so it **works with no signal**. Because every phone holds a
+  copy of its hash, it has to be long and mixed (8 to 32 letters and digits, at least one of
+  each). Five wrong guesses make that phone wait (5 minutes, then longer each time). Every use
+  is reported to the family and parents get a notification, so write it down somewhere safe and
+  change it if a child ever learns it. A phone knows a new code once it has synced.
+- **Longest self-started brick.** In *Parents & emergency settings*, parents can make a brick
+  someone started themselves (Brick button or a tag) end by itself after 1, 2, 4, 8 or 12 hours.
+  It doesn't affect Family Focus or schedules, which end when they are set to.
+- **Who can end Family Focus.** Only a parent: on a child's phone a tag tap during Family Focus
+  says "Not yet", and the server refuses a child's request. A parent who taps a Brick during
+  Family Focus can choose *Unlock just me* (the Focus carries on for everyone else) or *End Family
+  Focus for everyone*.
+- **Parent PIN.** Parents can always change their own essential apps. On anyone else's
+  phone, **Choose apps** asks for the parent PIN first, and the server checks it, so the
+  phone needs a connection. Set it under **Brick → Parents → Set parent PIN** (6–8 digits,
+  and different from the family PIN, which the children know). Five wrong guesses make that
+  person wait five minutes, and **Recent** shows wrong guesses and every time the PIN was
+  used. Until a parent PIN is set, only parents can change essential apps.
+- The parent PIN only guards the picker in the app. It doesn't stop someone clearing the
+  app's data or using developer tools, so keep uninstall protection on and use Android's
+  own Family Link or Digital Wellbeing limits for anything you can't risk.
+- Signing out of the planner ends a manual brick, so no phone is ever stuck.
+
+## Updating
+
+- **Server:** on the PC, in the planner folder run `git pull`, then double-click
+  `server\windows\install.cmd` again. It rebuilds and restarts the server and
+  keeps all your data.
+- **App:** install the new APK from the GitHub release / Actions artifact over the
+  old one. Nobody needs to sign in again.

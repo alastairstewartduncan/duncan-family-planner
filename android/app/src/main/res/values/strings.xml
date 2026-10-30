@@ -4,4 +4,10 @@
     <string name="widget_description">Shows today\'s plan for everyone</string>
     <string name="channel_daily">Morning plan</string>
     <string name="channel_daily_desc">The day\'s plan, sent every morning</string>
+    <string name="brick_service_label">Duncan Family Brick</string>
+    <string name="brick_service_summary">Locks all but your essential apps while your phone is bricked</string>
+    <string name="brick_service_description">Brick needs to know which app is open so it can cover anything that isn\'t allowed while your phone is bricked. It never reads what\'s on your screen, what you type or any of your messages.</string>
+    <string name="brick_admin_label">Duncan Family Brick protection</string>
+    <string name="brick_widget_name">Brick button</string>
+    <string name="brick_widget_description">One tap to brick your phone. Scan a Brick to unlock.</string>
 </resources>

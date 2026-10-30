@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarViewWeek
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Today
@@ -50,6 +51,8 @@ import androidx.navigation.navArgument
 import uk.co.duncan.familyplanner.ui.LocalSnackbar
 import uk.co.duncan.familyplanner.ui.Session
 import uk.co.duncan.familyplanner.ui.SessionViewModel
+import uk.co.duncan.familyplanner.brick.BrickEngine
+import uk.co.duncan.familyplanner.ui.screens.BrickScreen
 import uk.co.duncan.familyplanner.ui.screens.DayScreen
 import uk.co.duncan.familyplanner.ui.screens.DefaultsScreen
 import uk.co.duncan.familyplanner.ui.screens.EditDayScreen
@@ -67,13 +70,17 @@ class MainActivity : ComponentActivity() {
     /** Date requested by a notification or widget tap, consumed by the UI. */
     private var openDate by mutableStateOf<String?>(null)
 
+    /** Screen requested by a notification ("brick"), consumed by the UI. */
+    private var openScreen by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         openDate = intent?.getStringExtra(EXTRA_DATE)
+        openScreen = intent?.getStringExtra(EXTRA_OPEN)
         setContent {
             FamilyPlannerTheme {
-                App(openDate) { openDate = null }
+                App(openDate, openScreen, onOpenScreenHandled = { openScreen = null }) { openDate = null }
             }
         }
     }
@@ -81,10 +88,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         openDate = intent.getStringExtra(EXTRA_DATE)
+        openScreen = intent.getStringExtra(EXTRA_OPEN)
     }
 
     companion object {
         const val EXTRA_DATE = "date"
+        const val EXTRA_OPEN = "open"
     }
 }
 
@@ -92,16 +101,18 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
     Today("day", "Today", Icons.Default.Today),
     Week("week", "Week", Icons.Default.CalendarViewWeek),
     Shopping("shopping", "Shopping", Icons.Default.ShoppingCart),
+    Brick("brick", "Brick", Icons.Default.Lock),
     More("more", "More", Icons.Default.MoreHoriz),
 }
 
 @Composable
-private fun App(openDate: String?, onOpenDateHandled: () -> Unit) {
+private fun App(openDate: String?, openScreen: String?, onOpenScreenHandled: () -> Unit, onOpenDateHandled: () -> Unit) {
     val vm: SessionViewModel = viewModel()
     val session by vm.session.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val people by vm.people.collectAsStateWithLifecycle()
+    val trustPrompt by vm.trustPrompt.collectAsStateWithLifecycle()
     val activity = androidx.compose.ui.platform.LocalContext.current as ComponentActivity
 
     when (val s = session) {
@@ -114,6 +125,9 @@ private fun App(openDate: String?, onOpenDateHandled: () -> Unit) {
             onConnect = vm::connect,
             onSignIn = vm::signIn,
             onChangeServer = vm::changeServer,
+            trustPrompt = trustPrompt,
+            onTrust = vm::trustServer,
+            onDismissTrust = vm::dismissTrust,
         )
         is Session.Ready -> {
             NotificationPermission()
@@ -122,7 +136,9 @@ private fun App(openDate: String?, onOpenDateHandled: () -> Unit) {
                 MorningAlarm.schedule(activity, s.family)
                 WidgetUpdater.refresh(activity)
             }
-            Home(s, openDate, onOpenDateHandled, onSignOut = {
+            Home(s, openDate, onOpenDateHandled, openScreen, onOpenScreenHandled, onSignOut = {
+                // Never leave a phone stuck bricked after signing out.
+                BrickEngine.clearLocal(activity)
                 vm.signOut()
                 MorningAlarm.schedule(activity, null)
                 WidgetUpdater.refreshAsync(activity)
@@ -144,7 +160,14 @@ private fun NotificationPermission() {
 }
 
 @Composable
-private fun Home(session: Session.Ready, openDate: String?, onOpenDateHandled: () -> Unit, onSignOut: () -> Unit) {
+private fun Home(
+    session: Session.Ready,
+    openDate: String?,
+    onOpenDateHandled: () -> Unit,
+    openScreen: String?,
+    onOpenScreenHandled: () -> Unit,
+    onSignOut: () -> Unit,
+) {
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val backStack by nav.currentBackStackEntryAsState()
@@ -155,6 +178,13 @@ private fun Home(session: Session.Ready, openDate: String?, onOpenDateHandled: (
         if (openDate != null) {
             nav.navigate("day?date=$openDate") { launchSingleTop = true }
             onOpenDateHandled()
+        }
+    }
+
+    LaunchedEffect(openScreen) {
+        if (openScreen == "brick") {
+            nav.goTo(Tab.Brick)
+            onOpenScreenHandled()
         }
     }
 
@@ -191,6 +221,7 @@ private fun Home(session: Session.Ready, openDate: String?, onOpenDateHandled: (
                     WeekScreen(session, onOpenDay = { nav.navigate("day?date=$it") })
                 }
                 composable("shopping") { ShoppingScreen(session) }
+                composable("brick") { BrickScreen(session) }
                 composable("more") {
                     SettingsScreen(
                         session,

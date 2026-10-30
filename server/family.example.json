@@ -1,5 +1,5 @@
 {
-  "pin": "1234",
+  "pin": "",
   "family": {
     "name": "Duncan Family",
     "timezone": "Europe/London",
@@ -39,5 +39,9 @@
       "notes": "",
       "active": true
     }
+  },
+  "brick": {
+    "guardians": ["claire", "alastair"],
+    "emergencyMinutes": 60
   }
 }

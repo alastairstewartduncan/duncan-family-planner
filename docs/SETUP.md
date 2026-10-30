@@ -1,12 +1,13 @@
 # Setup guide (one-off, for the family admin)
 
 Duncan Family Planner runs on **your own Windows PC**. The family's data lives in
-a single database file on that PC, and the phones reach it over **Tailscale** — a
-free private network — so nothing is exposed to the internet. Allow about 45
-minutes.
+a single database file on that PC, and the phones reach it over the internet
+through your router, at your home's static IP address. Everything is encrypted
+(HTTPS) with the server's own certificate, which each phone checks with a short
+security code the first time. Allow about 30 minutes.
 
 ```
- Phones (app + widget)  ──Tailscale (encrypted)──►  Windows PC
+ Phones (app + widget)  ──HTTPS, static IP──► router ──port 8787──► Windows PC
                                                     └ Duncan Family Planner server
                                                        ├ data\planner.db  (SQLite)
                                                        ├ data\backups\    (nightly, 14 kept)
@@ -18,7 +19,8 @@ minutes.
 - A Windows 10/11 PC that's normally on (it can sleep at night, but the app can't
   load new plans while it's off — phones still show the last plan they saw).
 - [Node.js](https://nodejs.org) **LTS, version 22.13 or newer**.
-- [Tailscale](https://tailscale.com/download) — free for personal use.
+- A **static IP address** from your broadband provider, and access to your router's
+  settings (to forward one port).
 - [Git for Windows](https://git-scm.com/download/win), or download the repo as a ZIP
   from GitHub (Code → Download ZIP).
 
@@ -31,6 +33,10 @@ cd duncan-family-planner\server
 ```
 
 (Any folder works; these steps assume `C:\duncan-family-planner`.)
+
+> **Quickest way:** after step 1, double-click **`server\windows\first-time-setup.cmd`**.
+> It does steps 2 and 3 for you: installs the server, asks you to type the family
+> PIN, sets up the family and restarts the server. Then carry on from step 4.
 
 ## 2. Install the server
 
@@ -49,7 +55,8 @@ only, so nothing changes on the PC permanently.)
 
 This installs the packages, builds the server, adds a **"Duncan Family Planner"**
 task that starts it whenever Windows starts (and restarts it if it stops), and
-opens port **8787** in Windows Firewall for Tailscale and your home Wi-Fi only.
+opens port **8787** in Windows Firewall. At the end it shows your **server address**
+(your public IP) and the server's **security code**.
 
 ## 3. Set up the family
 
@@ -58,7 +65,7 @@ copy family.example.json family.json
 notepad family.json
 ```
 
-- Set **`pin`** to a 4–8 digit family PIN. Everyone uses it once when they first
+- Set **`pin`** to a 6–8 digit family PIN. Everyone uses it once when they first
   sign in on their phone.
 - Check names and colours, the usual week (`defaults`, 1 = Monday) and the regular
   events (`recurring`). All of these can be changed later in the app.
@@ -73,27 +80,35 @@ Restart-ScheduledTask "Duncan Family Planner"   # or: Stop-ScheduledTask / Start
 You can now delete the `pin` line from family.json. To change the PIN later, put
 a new one in family.json and run `npm run setup` again (everyone signs in again).
 
-## 4. Tailscale
+## 4. Open the port on your router
 
-1. Install Tailscale on the **PC** and sign in (a Google account is fine).
-2. In the [Tailscale admin console](https://login.tailscale.com/admin/machines),
-   note the PC's name (e.g. `family-pc`). **MagicDNS** is on by default, so phones
-   can use that name. Optionally turn off key expiry for the PC (⋯ → Disable key
-   expiry) so it never drops off.
-3. Install the **Tailscale app on each phone** and sign in to the **same Tailscale
-   account** (or invite Claire and Alfie to your tailnet from the admin console).
-   Leave Tailscale switched on — it uses very little battery.
+1. Sign in to your router's settings page (often `192.168.1.1`; the address and
+   password are usually on a sticker on the router).
+2. Find **Port forwarding** (sometimes under *Advanced*, *NAT* or *Firewall*).
+3. Add a rule: **TCP port 8787** → this PC's local address (shown at the end of the
+   installer, e.g. `192.168.1.50`), port 8787.
+4. Give the PC a **fixed local address** too (often *DHCP reservation* or *Address
+   reservation* on the same router), so the rule keeps pointing at it.
 
-Check it works: on a phone with Tailscale on, open
-`http://family-pc:8787/api/health` in the browser. You should see `"ok":true`.
+Check it works: on a phone with **Wi-Fi turned off**, open
+`https://YOUR.STATIC.IP:8787/api/health` in Chrome. Chrome warns that the connection
+isn't private — that's expected (it doesn't know the server's own certificate; the
+app does). Tap *Advanced → Proceed* and you should see `"ok":true`.
+
+**How safe is this?** Everything is encrypted; phones only talk to the server whose
+security code they checked; the PIN is 6–8 digits; and after 10 wrong PINs in 15
+minutes from anywhere, sign-in pauses for everyone for 15 minutes. Only port 8787 is
+opened.
 
 ## 5. Install the app on each phone
 
 1. On GitHub, open **Actions → Android app**, pick the latest green run and download
    **DuncanFamilyPlanner-apk** (or use a Release — see below).
 2. Copy the APK to the phone and open it; allow "install unknown apps" when asked.
-3. In the app, enter the server address — just the PC's Tailscale name, e.g.
-   `family-pc` (the app adds `http://` and `:8787`) — tap **Connect**, pick who you
+3. In the app, enter the server address — your static IP, e.g. `81.2.69.160` (the
+   app adds `https://` and `:8787`) — and tap **Connect**. The first time, it shows a
+   **security code**: check it matches the one the installer showed (also in
+   `server\data\tls\security-code.txt`) and tap **It matches**. Then pick who you
    are and enter the family PIN.
 4. Allow notifications when asked, then add the widget. The
    [user guide](USER-GUIDE.md) covers the rest.
@@ -101,26 +116,28 @@ Check it works: on a phone with Tailscale on, open
 **Releases:** push a tag (`git tag v2.0.0 && git push --tags`) and the APK is
 attached to a GitHub Release with a download link you can open on each phone.
 
-### Optional: sign the APK with your own key
+### Updating the app over the top (do this once)
 
-Unsigned CI builds are debug builds, which is fine for family use. For a release
-build (and smooth updates over the top), create a key once and add it to GitHub
-**Settings → Secrets and variables → Actions**:
+Android only installs an update over an app when the new APK is signed with the **same key**
+as the one already on the phone. Until a permanent key is saved in GitHub, every build is
+signed with a throwaway key, so each release means uninstalling the app first (and with
+uninstall protection on, switching that off first).
 
-```powershell
-keytool -genkeypair -v -keystore duncan-planner.jks -alias planner -keyalg RSA -keysize 2048 -validity 10000
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("duncan-planner.jks")) | Set-Clipboard
-```
+1. On your PC, double-click `android\signing\create-signing-key.cmd`. It makes the key in
+   `%USERPROFILE%\DuncanPlannerSigningKey` and saves the four secrets in GitHub. If the GitHub
+   command line (`gh`) isn't installed it opens the GitHub secrets page and the file with the
+   values so you can paste them in by hand.
+2. **Back up that folder somewhere private.** Never put it in the repo or share it. Anyone who
+   has the key could make an APK that installs over the family's app. If you lose it, the next
+   release needs one more uninstall on every phone.
+3. Build a release (push a version tag). It is now signed with your key.
+4. On each phone, **one last time**: turn off uninstall protection (Settings, Security, Device
+   admin apps), uninstall the app, install the new APK, and set Brick up again.
+5. From then on every release installs straight over the top. Sign-in, settings, Brick
+   permissions and uninstall protection are all kept.
 
-| Secret | Value |
-|---|---|
-| `SIGNING_KEYSTORE_BASE64` | paste from the clipboard |
-| `SIGNING_STORE_PASSWORD` | keystore password |
-| `SIGNING_KEY_ALIAS` | `planner` |
-| `SIGNING_KEY_PASSWORD` | key password |
-
-Keep `duncan-planner.jks` safe and out of the repo. Note: switching from debug to
-release builds means uninstalling the debug app once first.
+The script never replaces an existing key (that would force another reinstall). To save the
+GitHub secrets again from the same key, run it with `-Resend`.
 
 ## 6. Optional: Google Calendar sync
 
@@ -158,9 +175,52 @@ Google Calendar. This uses a free Google Cloud "service account" — no billing 
 | Problem | Fix |
 |---|---|
 | "running scripts is disabled on this system" | Use `install.cmd`, or run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` in the same window first. |
-| App says it can't reach the server | Tailscale on in the phone? PC on and awake? Try `http://<pc-name>:8787/api/health` in the phone's browser. |
-| Works at home but not out and about | The phone is using your Wi-Fi address instead of Tailscale — use the Tailscale name, and check Tailscale is connected. |
+| App says it can't reach the server | PC on and awake? Port 8787 forwarded on the router to the PC? Try `https://YOUR.STATIC.IP:8787/api/health` in the phone's browser with Wi-Fi off. |
+| Works at home but not out and about | The router's port forward is missing or points at the wrong PC address. Some routers don't let you reach your own public IP from inside the house; if so, at home use the PC's local address. |
+| "Security code has changed" | Only expected if the server was reinstalled and `data	ls` was deleted. Otherwise don't continue — something may be pretending to be the server. |
 | "That PIN isn't right" | Five wrong tries locks sign-in for a minute. Reset the PIN with `npm run setup`. |
 | Morning notification didn't come | Notifications allowed for the app? Today ticked under More → Morning reminder? Some phones (Samsung, Xiaomi) need the app set to *Unrestricted* battery use. Use **More → Send me a test**. |
 | Events not in Google Calendar | Calendar ID saved in the app? Calendar shared with the service account? `google-key.json` in the server folder and the task restarted? Check `logs\server.log`. |
 | PC sleeps | Settings → System → Power → set *Sleep* to Never when plugged in, or accept that the app shows the last plan while it sleeps. |
+
+## Optional: tray app for the home server (Windows)
+
+A little house icon by the clock shows whether the server is running, and lets you start,
+stop and restart it and see how the family's phones are doing.
+
+1. Double-click `server\windows\tray\install-tray.cmd` (no administrator needed). It starts
+   now and again every time you sign in to Windows.
+2. Look for the house icon. If it is hidden, click the ^ arrow by the clock and drag it onto
+   the taskbar. **Green** = running, **amber** = running but worth a look (sign-in paused, or
+   someone's app blocker is off), **red** = not running, **grey** = checking.
+3. Double-click it (or right-click → *Show status*) for uptime, backups, sign-in state, each
+   phone (bricked or free, blocker on or off, phone-free time today and this week) and recent
+   activity.
+
+**Family Focus.** Right-click → *Start Family Focus...* to choose who puts their phone down and
+for how long (30 minutes up to 3 hours, or until you end it). *End Family Focus* ends it. Phones
+lock or unlock within about 30 seconds.
+
+**Recovery code.** Right-click → *Recovery code...* to set the one code that unlocks any family
+phone, even with no signal (*Make one for me* picks a good one). It is shown once when you save it:
+write it down. See `docs/BRICK.md`.
+
+**Phone apps.** Right-click → *Phone apps...* to choose which apps stay open on each person's
+phone while it is bricked. Pick the person, tick *Choose these from this PC*, tick the apps and
+Save. Their phone picks it up within about 30 seconds and the *Choose apps* button on their phone
+is switched off. Untick the box and Save to give the choice back to their phone. Each phone lists
+its apps to the server (at most once a day, or when its apps change), so the list is empty until
+the phone has the latest version of the app and the app blocker is on. An app installed later is
+not allowed until you tick it.
+
+Start, Stop and Restart ask Windows for permission each time, because the server runs as a
+startup task with full rights. Closing the status window only hides it; *Exit tray app* leaves
+the server running.
+
+The tray app reads `https://localhost:<port>/api/admin/status`, which the server only answers
+to programs on the same PC (never over the network, through a proxy, or from a web page) and which
+carries no PINs, tokens or tag secrets. The controls (focus and phone apps) use the same
+PC-only address and also need the tray app's own header, so a web page can't trigger them. Its own log is `server\logs\tray.log`. To remove it:
+`powershell -ExecutionPolicy Bypass -File server\windows\tray\install-tray.ps1 -Remove`.
+
+You need to update and restart the server (see above) for the status page to exist.

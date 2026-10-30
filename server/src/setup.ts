@@ -4,7 +4,8 @@
 // days and the shopping list.
 import fs from "node:fs";
 import path from "node:path";
-import { ROOT, loadConfig } from "./config";
+import { BrickStore } from "./brick";
+import { ROOT, loadConfig, readJsonFile } from "./config";
 import { DAYS_AHEAD, Store } from "./store";
 import { Family, PersonDay, RecurringItem } from "./types";
 
@@ -13,6 +14,7 @@ interface SeedFile {
   family: Omit<Family, "calendarId"> & { calendarId?: string };
   defaults?: Record<string, { people: Record<string, PersonDay> }>;
   recurring?: Record<string, RecurringItem>;
+  brick?: { guardians?: string[]; emergencyMinutes?: number };
 }
 
 const file = path.resolve(process.argv[2] ?? path.join(ROOT, "family.json"));
@@ -20,7 +22,7 @@ if (!fs.existsSync(file)) {
   console.error(`Can't find ${file}.\nCopy family.example.json to family.json, edit it, then run npm run setup again.`);
   process.exit(1);
 }
-const seed = JSON.parse(fs.readFileSync(file, "utf8")) as SeedFile;
+const seed = readJsonFile(file) as SeedFile;
 const config = loadConfig();
 const store = new Store(path.join(config.dataDir, "planner.db"));
 
@@ -35,15 +37,20 @@ for (const [id, value] of Object.entries(seed.recurring ?? {})) store.saveRecurr
 
 const pin = String(seed.pin ?? "").trim();
 if (pin) {
-  if (!/^\d{4,8}$/.test(pin)) {
-    console.error("The PIN must be 4–8 digits.");
+  if (!/^\d{6,8}$/.test(pin)) {
+    console.error("The PIN must be 6–8 digits (the server can be reached from the internet, so short PINs are too easy to guess).");
     process.exit(1);
   }
   store.setPin(pin);
   console.log("✔ Family PIN set (everyone will need to sign in again). You can now remove it from family.json.");
 } else if (!store.hasPin()) {
-  console.error('No PIN set yet. Add "pin": "1234" (4–8 digits) to family.json and run setup again.');
+  console.error('No PIN set yet. Add "pin": "123456" (6–8 digits) to family.json and run setup again.');
   process.exit(1);
+}
+
+if (seed.brick) {
+  new BrickStore(store).saveSettings(seed.brick);
+  console.log(`✔ Brick parents: ${(seed.brick.guardians ?? []).join(", ") || "(unchanged)"}`);
 }
 
 store.ensureDays(store.today(), DAYS_AHEAD);

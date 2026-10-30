@@ -3,4 +3,17 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowBackground">@color/background</item>
     </style>
+
+    <!-- Brick screen: full-screen and dark, so it reads as a different mode. -->
+    <style name="Theme.FamilyPlanner.Brick" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
+    <!-- Tag taps: just a dialog over whatever was open. -->
+    <style name="Theme.FamilyPlanner.Tap" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
 </resources>

@@ -6,6 +6,7 @@ who's where, what's for tea and who's taking who, gets the plan as a notificatio
 each morning, and timed events can sync to a shared Google Calendar.
 
 - **User guide:** [docs/USER-GUIDE.md](docs/USER-GUIDE.md)
+- **Brick (phone-free time):** [docs/BRICK.md](docs/BRICK.md)
 - **Setup guide (one-off):** [docs/SETUP.md](docs/SETUP.md)
 
 ## Features
@@ -20,17 +21,20 @@ each morning, and timed events can sync to a shared Google Calendar.
 - Works offline with the last plan seen; changes from others appear within ~15 seconds
 - Optional Google Calendar sync for timed items
 - Family PIN sign-in; all data stays on your PC; nightly backups
+- **Brick**: tap a phone on an NFC tag to lock all but essential apps; Family Focus,
+  phone-free schedules, parent passes, one sealed emergency tag, tamper alerts and
+  phone-free stats
 
 ## How it fits together
 
 ```
 Android app (Kotlin, Jetpack Compose, Glance widget)
-   │  HTTP over Tailscale (WireGuard-encrypted, private to your devices)
+   │  HTTPS to the home's static IP (server's own certificate, pinned by each phone)
    ▼
 Windows PC — server/ (Node.js 22, no framework)
    ├─ data/planner.db   SQLite (built into Node) — days, regular events, usual week, shopping
    ├─ data/backups/     nightly copy, 14 kept
-   ├─ REST API          /api/days, /api/recurring, /api/defaults, /api/shopping, /api/family …
+   ├─ REST API          /api/days, /api/recurring, /api/defaults, /api/shopping, /api/family, /api/brick …
    ├─ housekeeping      keeps the next 14 days ready from the usual week + regular events
    └─ Google Calendar   optional, via a service-account key
 ```

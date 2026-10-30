@@ -39,7 +39,7 @@ jobs:
             echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "BUILD_TYPE=release" >> "$GITHUB_ENV"
           else
-            echo "::warning::No signing keystore secret — building a debug APK (fine for family use; see docs/SETUP.md for a release key)."
+            echo "::warning::No signing key saved in GitHub, so this APK is signed with a throwaway key and CANNOT be installed over an earlier version (phones need the app uninstalled first). Run android/signing/create-signing-key.cmd once to fix this for good."
             echo "BUILD_TYPE=debug" >> "$GITHUB_ENV"
           fi
 

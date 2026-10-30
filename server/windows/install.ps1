@@ -11,8 +11,9 @@
     2. Installs packages and builds the server.
     3. Registers a scheduled task that starts the server when Windows starts
        (even before anyone logs in) and restarts it if it stops.
-    4. Opens the server port in Windows Firewall for Tailscale and your home network only.
-    5. Starts the server.
+    4. Opens the server port in Windows Firewall (the phones reach it over the
+       internet through your router, encrypted with the server's own certificate).
+    5. Starts the server and shows the security code phones should show.
   Safe to re-run after pulling a new version (it stops, rebuilds and restarts).
 #>
 param(
@@ -24,6 +25,16 @@ $ErrorActionPreference = "Stop"
 $ServerDir = Split-Path -Parent $PSScriptRoot
 
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
+
+# The server uses its own HTTPS certificate, which Windows PowerShell won't accept,
+# so ask curl.exe (built into Windows 10/11) and tell it not to check the certificate.
+function Get-Health([int]$p) {
+  foreach ($url in @("https://localhost:$p/api/health", "http://localhost:$p/api/health")) {
+    $out = & curl.exe -sk --max-time 5 $url 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) { try { return ($out | ConvertFrom-Json) } catch { } }
+  }
+  return $null
+}
 
 # --- Admin check -------------------------------------------------------------
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
@@ -64,8 +75,8 @@ try {
 # --- Config ------------------------------------------------------------------------
 $config = Join-Path $ServerDir "config.json"
 if (-not (Test-Path $config)) {
-  @{ port = $Port; dataDir = "data"; googleKeyFile = "google-key.json"; backupsToKeep = 14 } |
-    ConvertTo-Json | Set-Content -Encoding UTF8 $config
+  $json = @{ port = $Port; dataDir = "data"; googleKeyFile = "google-key.json"; backupsToKeep = 14 } | ConvertTo-Json
+  [IO.File]::WriteAllText($config, $json, (New-Object System.Text.UTF8Encoding $false))
   Write-Host "Created config.json (port $Port)"
 } else {
   $Port = (Get-Content $config -Raw | ConvertFrom-Json).port
@@ -88,32 +99,32 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
 # --- Firewall ------------------------------------------------------------------------
-Step "Opening port $Port for Tailscale and the home network"
+Step "Opening port $Port in Windows Firewall"
 Get-NetFirewallRule -DisplayName "$TaskName*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName "$TaskName (Tailscale + LAN)" -Direction Inbound -Protocol TCP -LocalPort $Port `
-  -RemoteAddress @("100.64.0.0/10", "LocalSubnet") -Action Allow -Profile Any | Out-Null
+New-NetFirewallRule -DisplayName "$TaskName (HTTPS)" -Direction Inbound -Protocol TCP -LocalPort $Port `
+  -Action Allow -Profile Any | Out-Null
 
 # --- Start ---------------------------------------------------------------------------
 Step "Starting the server"
 Start-ScheduledTask -TaskName $TaskName
-Start-Sleep -Seconds 4
-try {
-  $health = Invoke-RestMethod -Uri "http://localhost:$Port/api/health" -TimeoutSec 5
+Start-Sleep -Seconds 5
+$health = Get-Health $Port
+if ($health) {
   Write-Host "Server is running (PIN set: $($health.hasPin))." -ForegroundColor Green
-} catch {
+} else {
   Write-Warning "The server didn't answer yet. Check $ServerDir\logs\server.log"
 }
 
-$ts = Get-Command tailscale -ErrorAction SilentlyContinue
-$name = $null
-if ($ts) {
-  try { $name = ((cmd /c "tailscale status --json 2>nul") -join "`n" | ConvertFrom-Json).Self.DNSName.TrimEnd(".") } catch { }
-}
-if ($name) {
-  Write-Host "`nIn the app, use this server address:  $($name.Split('.')[0])" -ForegroundColor Green
-  Write-Host "(or the full name http://$($name):$Port)"
-} elseif ($ts) {
-  Write-Warning "Tailscale is installed but not signed in on this PC - sign in, then use the PC's Tailscale name in the app."
-} else {
-  Write-Warning "Tailscale isn't installed on this PC yet - see docs\SETUP.md step 4."
-}
+$codeFile = Join-Path $ServerDir "data\tls\security-code.txt"
+$publicIp = $null
+try { $publicIp = (& curl.exe -s --max-time 5 https://api.ipify.org 2>$null) } catch { }
+Write-Host ""
+Write-Host "-----------------------------------------------------------------" -ForegroundColor Green
+if ($publicIp) { Write-Host "  Server address for the phones:  $publicIp" -ForegroundColor Green }
+if (Test-Path $codeFile) { Write-Host "  Security code phones should show:  $((Get-Content $codeFile -Raw).Trim())" -ForegroundColor Green }
+Write-Host "-----------------------------------------------------------------" -ForegroundColor Green
+$lan = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object { $_.PrefixOrigin -in @("Dhcp", "Manual") -and $_.IPAddress -notlike "169.254.*" } |
+  Select-Object -First 1).IPAddress
+Write-Host "On your router, forward TCP port $Port to this PC ($lan) so phones can reach it from outside."
+Write-Host "At home on Wi-Fi the phones can also use $lan."

@@ -1,10 +1,18 @@
 // Entry point: `npm start`. Opens the database, starts the API and the daily housekeeping.
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import path from "node:path";
 import { createApi } from "./api";
 import { CalendarSync } from "./calendar";
 import { loadConfig } from "./config";
 import { DAYS_AHEAD, Store } from "./store";
+import { loadOrCreateTls } from "./tls";
+
+// Put the time on every log line so the log file is useful after the fact.
+for (const level of ["log", "warn", "error"] as const) {
+  const original = console[level].bind(console);
+  console[level] = (...args: unknown[]) => original(new Date().toISOString(), ...args);
+}
 
 const config = loadConfig();
 const store = new Store(path.join(config.dataDir, "planner.db"));
@@ -38,16 +46,43 @@ function housekeeping() {
 housekeeping();
 setInterval(housekeeping, 10 * 60 * 1000).unref();
 
-const server = createServer(createApi(store));
-server.listen(config.port, "0.0.0.0", () => {
-  console.log(`Duncan Family Planner server listening on port ${config.port}`);
-  console.log(`Data folder: ${config.dataDir}`);
+const handler = createApi(store, { startedAt: Date.now(), port: config.port, https: config.https, dataDir: config.dataDir });
+let server: ReturnType<typeof createServer>;
+async function start() {
+  if (config.https) {
+    const tls = await loadOrCreateTls(path.join(config.dataDir, "tls"));
+    server = createHttpsServer({ key: tls.key, cert: tls.cert }, handler);
+    console.log(`HTTPS on. Security code phones should show: ${tls.securityCode}`);
+  } else {
+    server = createServer(handler);
+    console.log("HTTPS off (plain http) - only use this on a private network.");
+  }
+  server.listen(config.port, "0.0.0.0", () => {
+    console.log(`Duncan Family Planner server listening on port ${config.port}`);
+    console.log(`Data folder: ${config.dataDir}`);
+  });
+}
+start().catch((e) => {
+  console.error("Couldn't start the server", e);
+  process.exit(1);
 });
 
+// Stop taking new requests, let in-flight ones finish (max 5 s), then close the database cleanly.
+let stopping = false;
 function shutdown() {
-  server.close();
-  store.db.close();
-  process.exit(0);
+  if (stopping) return;
+  stopping = true;
+  console.log("Shutting down...");
+  const finish = () => {
+    try { store.db.close(); } catch { /* already closed */ }
+    process.exit(0);
+  };
+  setTimeout(finish, 5000).unref();
+  if (server) server.close(finish); else finish();
 }
+
+// A crash is logged with its time, then the process exits so the Windows startup task restarts it.
+process.on("uncaughtException", (e) => { console.error("Uncaught error, restarting", e); process.exit(1); });
+process.on("unhandledRejection", (e) => { console.error("Unhandled promise rejection, restarting", e); process.exit(1); });
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

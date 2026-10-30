@@ -1,6 +1,8 @@
 // HTTP API. Plain node:http with a tiny router, so there's nothing extra to install.
 import { IncomingMessage, ServerResponse } from "node:http";
 import { DateTime } from "luxon";
+import { ServerInfo, buildStatus, isLocalRequest } from "./admin";
+import { BrickStore } from "./brick";
 import { DATE_FMT } from "./plan";
 import { HttpError, Store } from "./store";
 import { Person, PersonDay, RecurringItem } from "./types";
@@ -17,13 +19,35 @@ const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 /** Failed PIN attempts per address, to slow down guessing. */
 const failures = new Map<string, { count: number; until: number }>();
 
-export function createApi(store: Store) {
+/**
+ * Failed PIN attempts from anywhere. The server can be reachable from the
+ * internet, where guesses can come from many addresses, so after too many
+ * wrong PINs in a short time every sign-in pauses for a while.
+ */
+const GLOBAL_LIMIT = 10;
+const GLOBAL_WINDOW_MS = 15 * 60_000;
+let globalFailures: number[] = [];
+let globalPauseUntil = 0;
+
+export function resetLoginLimits() {
+  failures.clear();
+  globalFailures = [];
+  globalPauseUntil = 0;
+}
+
+/** Sign-in pause state, for the tray app's status view. */
+function loginState() {
+  const now = Date.now();
+  return { pausedUntil: globalPauseUntil, recentFailures: globalFailures.filter((t) => t > now - GLOBAL_WINDOW_MS).length };
+}
+
+export function createApi(store: Store, info: ServerInfo = { startedAt: Date.now(), port: 0, https: false, dataDir: "" }) {
   const routes: Route[] = [];
   const add = (method: string, path: string, handler: Handler, auth = true) =>
     routes.push({ method, pattern: new RegExp(`^${path}$`), auth, handler });
 
   // ---- Public ------------------------------------------------------------------
-  add("GET", "/api/health", () => ({ ok: true, revision: store.revision(), hasPin: store.hasPin() }), false);
+  add("GET", "/api/health", () => ({ ok: true, revision: store.revision(), hasPin: store.hasPin(), uptimeSeconds: Math.round((Date.now() - info.startedAt) / 1000) }), false);
 
   // Names and colours only, for the "who are you?" picker on the sign-in screen.
   add("GET", "/api/people", () => store.family().people, false);
@@ -31,16 +55,31 @@ export function createApi(store: Store) {
   add("POST", "/api/login", ({ req, body }) => {
     const ip = req.socket.remoteAddress ?? "?";
     const f = failures.get(ip);
-    if (f && f.until > Date.now()) throw new HttpError(429, "Too many wrong PINs. Try again in a minute.");
+    const now = Date.now();
+    if (globalPauseUntil > now) throw new HttpError(429, "Too many wrong PINs recently. Sign-in is paused for a few minutes.");
+    if (f && f.until > now) throw new HttpError(429, "Too many wrong PINs. Try again in a minute.");
     const personId = String(body?.personId ?? "");
     if (!store.family().people.some((p) => p.id === personId)) throw new HttpError(400, "Pick who you are.");
     if (!store.checkPin(String(body?.pin ?? ""))) {
       const count = (f?.count ?? 0) + 1;
-      failures.set(ip, { count, until: count >= 5 ? Date.now() + 60_000 : 0 });
+      failures.set(ip, { count, until: count >= 5 ? now + 60_000 : 0 });
+      globalFailures = [...globalFailures.filter((t) => t > now - GLOBAL_WINDOW_MS), now];
+      if (globalFailures.length >= GLOBAL_LIMIT) {
+        globalPauseUntil = now + GLOBAL_WINDOW_MS;
+        globalFailures = [];
+        console.warn(`[security] ${GLOBAL_LIMIT} wrong PINs in 15 minutes - sign-in paused for 15 minutes`);
+      }
       throw new HttpError(401, "That PIN isn't right.");
     }
     failures.delete(ip);
     return { token: store.createToken(personId), personId };
+  }, false);
+
+  // Status for the Windows tray app. Only answers to programs on this PC itself, never to the
+  // internet or the home network, and it carries no PINs, tokens or tag secrets.
+  add("GET", "/api/admin/status", ({ req }) => {
+    localOnly(req);
+    return buildStatus(store, brick, info, loginState());
   }, false);
 
   // ---- Signed in -----------------------------------------------------------------
@@ -144,6 +183,72 @@ export function createApi(store: Store) {
     return { ok: true };
   });
 
+  // ---- Brick (phone-free time) ------------------------------------------------------
+  const brick = new BrickStore(store);
+  const guardian = (h: Handler): Handler => (ctx) => {
+    brick.requireGuardian(ctx.personId);
+    return h(ctx);
+  };
+
+  add("GET", "/api/brick", ({ personId }) => brick.snapshot(personId));
+  add("PUT", "/api/brick/settings", guardian(({ body }) => brick.saveSettings(body ?? {})));
+  add("POST", "/api/brick/tags", guardian(({ body, personId }) => brick.addTag(body, personId)));
+  add("PUT", `/api/brick/tags/${ID}`, guardian(({ params, body }) => brick.renameTag(params[0], String(body?.name ?? ""))));
+  add("DELETE", `/api/brick/tags/${ID}`, guardian(({ params }) => {
+    brick.deleteTag(params[0]);
+    return { ok: true };
+  }));
+  add("POST", `/api/brick/tags/${ID}/rearm`, guardian(({ params, personId }) => brick.rearm(params[0], personId)));
+  add("PUT", "/api/brick/parent-pin", guardian(({ body, personId }) => {
+    brick.setParentPin(personId, String(body?.pin ?? ""));
+    return { ok: true };
+  }));
+  // Anyone signed in may try the parent PIN: it is how a child's phone proves a parent is present.
+  add("PUT", "/api/brick/recovery", guardian(({ body, personId }) => {
+    brick.setRecoveryCode(personId, String(body?.code ?? ""));
+    return { ok: true };
+  }));
+  add("POST", "/api/brick/parent-pin/check", ({ body, personId }) => {
+    if (!brick.checkParentPin(personId, String(body?.pin ?? ""))) throw new HttpError(401, "That parent PIN isn't right.");
+    if (!brick.isGuardian(personId)) brick.noteAppsUnlocked(personId);
+    return { ok: true };
+  });
+  // Phones tell the server which apps they have, so a parent can choose the essential ones from the PC.
+  add("POST", "/api/brick/apps", ({ body, personId }) => brick.reportInstalledApps(personId, body));
+  add("PUT", "/api/brick/schedules", guardian(({ body }) => brick.saveSchedules(body)));
+  add("POST", "/api/brick/focus", guardian(({ body, personId }) => brick.startFocus(body, personId)));
+  add("DELETE", "/api/brick/focus", guardian(({ personId }) => {
+    brick.endFocus(personId);
+    return { ok: true };
+  }));
+  add("POST", "/api/brick/pass", guardian(({ body, personId }) => brick.grantPass(body, personId)));
+  add("POST", "/api/brick/status", ({ body, personId }) => brick.reportStatus(personId, body));
+  add("POST", "/api/brick/events", ({ body, personId }) => brick.reportEvent(personId, body));
+
+  // ---- Controls for the Windows tray app (this PC only) -----------------------------
+  add("GET", "/api/admin/apps", ({ req }) => {
+    localOnly(req);
+    return brick.adminApps();
+  }, false);
+  add("PUT", `/api/admin/apps/${ID}`, ({ req, params, body }) => {
+    localOnly(req, true);
+    return brick.setManagedApps(params[0], body?.allowed ?? null);
+  }, false);
+  add("PUT", "/api/admin/recovery", ({ req, body }) => {
+    localOnly(req, true);
+    brick.setRecoveryCode(brick.adminPerson(), String(body?.code ?? ""));
+    return { ok: true };
+  }, false);
+  add("POST", "/api/admin/focus", ({ req, body }) => {
+    localOnly(req, true);
+    return brick.startFocus(body, brick.adminPerson());
+  }, false);
+  add("DELETE", "/api/admin/focus", ({ req }) => {
+    localOnly(req, true);
+    brick.endFocus(brick.adminPerson());
+    return { ok: true };
+  }, false);
+
   // ---- Dispatcher ------------------------------------------------------------------
   return async function handle(req: IncomingMessage, res: ServerResponse) {
     const started = Date.now();
@@ -175,6 +280,14 @@ export function createApi(store: Store) {
       if (process.env.LOG_REQUESTS) console.log(`${req.method} ${url.pathname} ${res.statusCode} ${Date.now() - started}ms`);
     }
   };
+}
+
+/** Requests only from programs on this PC, with the tray app's own header on anything that changes data. */
+function localOnly(req: IncomingMessage, changes = false) {
+  if (!isLocalRequest(req.socket.remoteAddress, req.headers["x-forwarded-for"], req.headers.host ?? "", req.headers.origin)) {
+    throw new HttpError(404, "Not found");
+  }
+  if (changes && req.headers["x-dfp-admin"] !== "tray") throw new HttpError(404, "Not found");
 }
 
 function bearer(req: IncomingMessage): string | undefined {
@@ -230,6 +343,12 @@ function readJson(req: IncomingMessage): Promise<any> {
 function send(res: ServerResponse, status: number, data: unknown) {
   if (res.headersSent) return;
   const body = JSON.stringify(data);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'",
+  });
   res.end(body);
 }
